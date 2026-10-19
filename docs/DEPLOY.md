@@ -63,7 +63,7 @@ scripts/migrate-remote.sh --token-file <your token file> --account <account id>
 scripts/secrets.sh --token-file <your token file> --account <account id> --script starter-app --rotate-auth-secret
 ```
 
-The Worker refuses to serve (503, and a `config.invalid` log event) until `BETTER_AUTH_SECRET` is set, because Better Auth would otherwise sign sessions with a public default key. Use `--script <app_name>` if you changed `app_name`.
+The Worker refuses to serve (503, and a `config.invalid` log event) until `BETTER_AUTH_SECRET` is set to at least 32 characters (the script generates 64), because Better Auth would otherwise sign sessions with a public default key. Use `--script <app_name>` if you changed `app_name`.
 
 For Google login, create an OAuth web client in Google Cloud with the redirect URI `https://<host>/api/auth/callback/google`, save the client id and secret to two files, and add `--google-id-file <file> --google-secret-file <file>`. Leave out `--rotate-auth-secret` on later runs; rotating it signs everyone out.
 

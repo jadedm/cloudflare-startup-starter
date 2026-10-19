@@ -3,11 +3,7 @@ import { captcha } from "better-auth/plugins";
 import type { SecondaryStorage } from "better-auth";
 import type { Env } from "./env";
 import type { Bindings } from "./bindings";
-import { logEvent } from "./log";
-
-// A KV error message can contain the key, and the key is a session token, so
-// only the error's name is logged.
-const errorName = (e: unknown): string => (e instanceof Error ? e.name : "unknown");
+import { errorKindOf, logEvent } from "./log";
 
 // KV rejects expirationTtl below 60 seconds.
 const KV_MIN_TTL = 60;
@@ -42,7 +38,7 @@ const kvSessionStore = (kv: KVNamespace, maxTtl: number): SecondaryStorage => ({
     const [value] = await kv.get(key).then(
       (v) => [v] as const,
       (e: unknown) => {
-        logEvent("warn", "cache.kv_failed", { op: "get", error: errorName(e) });
+        logEvent("warn", "cache.kv_failed", { op: "get", error: errorKindOf(e) });
         return [null] as const;
       },
     );
@@ -51,12 +47,12 @@ const kvSessionStore = (kv: KVNamespace, maxTtl: number): SecondaryStorage => ({
   async set(key, value, ttl) {
     const expirationTtl = Math.max(Math.min(ttl ?? maxTtl, maxTtl), KV_MIN_TTL);
     await kv.put(key, value, { expirationTtl }).catch((e: unknown) => {
-      logEvent("warn", "cache.kv_failed", { op: "put", error: errorName(e) });
+      logEvent("warn", "cache.kv_failed", { op: "put", error: errorKindOf(e) });
     });
   },
   async delete(key) {
     await kv.delete(key).catch((e: unknown) => {
-      logEvent("warn", "cache.kv_failed", { op: "delete", error: errorName(e) });
+      logEvent("warn", "cache.kv_failed", { op: "delete", error: errorKindOf(e) });
     });
   },
 });

@@ -32,6 +32,23 @@ export const logEvent = (level: Level, event: EventName, fields: Record<string, 
   write[level](JSON.stringify({ level, event, ...fields }));
 };
 
+// Which API resource a request was for, from a fixed list, so events can be
+// told apart without logging the path and the ids in it.
+const API_RESOURCES = new Set(["me", "notes", "avatar"]);
+export const apiResourceOf = (path: string): string => {
+  const first = path.split("/")[2] ?? "";
+  return API_RESOURCES.has(first) ? first : "other";
+};
+
+// A fixed category for an error, never its message, which can carry a key or
+// a value. D1 errors carry a D1_ prefix; anything else keeps its class name.
+export const errorKindOf = (err: unknown): string => {
+  if (!(err instanceof Error)) return "unknown";
+  if (err.message.startsWith("D1_")) return "d1";
+  if (err.message.startsWith("fault injected")) return "fault_injected";
+  return err.name;
+};
+
 // Cloudflare's ray id, also in the response's cf-ray header, ties a log line
 // to a request a user reports. Local dev has none, so a random id stands in.
 export const requestIdOf = (req: Request): string => req.headers.get("cf-ray") ?? crypto.randomUUID();

@@ -3,7 +3,7 @@ import type { Env } from "./env";
 import { assertFaultAllowed, isolateBindings, timingStore, type Bindings, type D1Timing } from "./bindings";
 import { authFor, type Auth } from "./auth";
 import { accessAllows } from "./access";
-import { authErrorCode, levelForStatus, logEvent, requestIdOf } from "./log";
+import { apiResourceOf, authErrorCode, errorKindOf, levelForStatus, logEvent, requestIdOf } from "./log";
 
 type Vars = {
   requestId: string;
@@ -91,7 +91,7 @@ app.use("/api/*", async (c, next) => {
   if (!isStateChanging(c.req.method)) return next();
   if (!c.req.header("cookie")) return next();
   if (requestSource(c.req.raw) === new URL(c.env.BETTER_AUTH_URL).origin) return next();
-  logEvent("warn", "request.origin_rejected", { requestId: c.get("requestId"), method: c.req.method, route: c.req.routePath });
+  logEvent("warn", "request.origin_rejected", { requestId: c.get("requestId"), method: c.req.method, resource: apiResourceOf(c.req.path) });
   return c.json({ error: "origin not allowed" }, 403);
 });
 
@@ -111,7 +111,7 @@ app.use("/api/*", async (c, next) => {
     c.header("x-d1-statements", timing.statements.join(" | "));
   }
   if (!session) {
-    logEvent("info", "request.unauthenticated", { requestId: c.get("requestId"), method: c.req.method, route: c.req.routePath });
+    logEvent("info", "request.unauthenticated", { requestId: c.get("requestId"), method: c.req.method, resource: apiResourceOf(c.req.path) });
     return c.json({ error: "unauthorized" }, 401);
   }
   c.set("userId", session.user.id);
@@ -201,8 +201,8 @@ app.on(["GET", "HEAD"], ["/admin", "/admin/*"], async (c) => {
 });
 
 app.onError((err, c) => {
-  // The error's name, not its message: a message can carry a key or a value.
-  logEvent("error", "error.unhandled", { requestId: c.get("requestId"), method: c.req.method, route: c.req.routePath, error: err.name });
+  // A fixed error category, never the message: a message can carry a key or a value.
+  logEvent("error", "error.unhandled", { requestId: c.get("requestId"), method: c.req.method, resource: apiResourceOf(c.req.path), error: errorKindOf(err) });
   return c.json({ error: "internal error" }, 500);
 });
 

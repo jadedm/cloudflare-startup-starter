@@ -9,15 +9,15 @@ How to see what the app is doing: the events it logs, where to read them, and ho
 | Event | Level | Fields | When |
 |---|---|---|---|
 | `auth.request` | info, warn on 4xx, error on 5xx | `route`, `method`, `status`, `code` | Every call to `/api/auth/*`. `code` is Better Auth's error code on failure, for example `INVALID_EMAIL_OR_PASSWORD`, `VERIFICATION_FAILED` (Turnstile) or `MISSING_RESPONSE` (no Turnstile token) |
-| `request.unauthenticated` | info | `route`, `method` | An API call with no valid session (401) |
-| `request.origin_rejected` | warn | `route`, `method` | A cookie-bearing write without this app's Origin or Referer (403) |
+| `request.unauthenticated` | info | `resource`, `method` | An API call with no valid session (401) |
+| `request.origin_rejected` | warn | `resource`, `method` | A cookie-bearing write without this app's Origin or Referer (403) |
 | `upload.rejected` | warn | `reason` (`no_length`, `too_large`, `not_an_image`) | An avatar upload refused |
 | `admin.access_denied` | warn | `route` | `/admin` without a valid Access token |
 | `cache.kv_failed` | warn | `op`, `error` | A KV session cache read, write or delete failed; the app carried on from D1 |
-| `error.unhandled` | error | `route`, `method`, `error` | Anything that became a 500 |
+| `error.unhandled` | error | `resource`, `method`, `error` | Anything that became a 500 |
 | `config.invalid` | error | `setting` | A required setting is missing or unsafe, such as `BETTER_AUTH_SECRET`; the Worker answers 503 |
 
-`route` is the route pattern, such as `/api/*`, never the full path, so ids in URLs stay out of these events. `error` is the error's name, not its message, because a message can carry a key: for the KV session cache, the key is a session token.
+`resource` is which API resource the request was for (`me`, `notes`, `avatar`, or `other`), and `route` on `admin.access_denied` is the route pattern; neither is the full path, so ids in URLs stay out of these events. `error` is a fixed category (`d1` for D1 errors, otherwise the error's class name), never the message, because a message can carry a key: for the KV session cache, the key is a session token.
 
 Every event carries `requestId`, which is Cloudflare's ray id. The same value is in the `cf-ray` response header, so a user's report can be matched to its log line.
 
