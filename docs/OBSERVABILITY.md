@@ -19,7 +19,7 @@ How to see what the app is doing: the events it logs, where to read them, and ho
 
 `resource` is which API resource the request was for (`me`, `notes`, `avatar`, or `other`), and `route` on `admin.access_denied` is the route pattern; neither is the full path, so ids in URLs stay out of these events. `error` is a fixed category (`d1` for D1 errors, otherwise the error's class name), never the message, because a message can carry a key: for the KV session cache, the key is a session token.
 
-Every event carries `requestId`, which is Cloudflare's ray id. The same value is in the `cf-ray` response header, so a user's report can be matched to its log line.
+Every event carries `requestId`, which is Cloudflare's ray id. The same value is in the `cf-ray` response header with a location suffix added (for example `a4cfccc36bc8e1dc-MRS` in the header, `a4cfccc36bc8e1dc` in the event), so a user's report can be matched to its log line.
 
 These events never carry an email, password, cookie, token or secret. The local test suite checks this on every run, including the actual session token values it created (cases S6 and S7 in [TESTING.md](TESTING.md)).
 
@@ -51,12 +51,14 @@ Add the observability server to your client. For Claude Code:
 claude mcp add --transport http cloudflare-observability https://observability.mcp.cloudflare.com/mcp
 ```
 
-The first call opens a browser to sign in to Cloudflare and choose an account. Then ask in plain language, for example:
+The first call opens a browser to sign in to Cloudflare and choose an account. Then ask in plain language. Questions that count or group events work well, for example:
 
-- "List the Workers in my account and show the last hour of logs for starter-app."
-- "How many auth.request events with status 403 and code VERIFICATION_FAILED in the last day?"
-- "Show error.unhandled events since yesterday, grouped by path."
-- "Find the log line for ray id <id from a user's cf-ray header>."
+- "List the Workers in my account."
+- "In the last day, count starter-app's events grouped by event."
+- "Count auth.request events grouped by code for the last hour."
+- "How many error.unhandled events since yesterday, grouped by resource?"
+
+Tested on 19 Oct 2026: listing Workers and counting or grouping the app's events worked. Asking the observability server to list the app's raw events failed with a parse error, because it expects invocation fields such as `outcome` on every event and the app's log lines do not have them. For a single log line, for example the one matching a user's ray id, use the dashboard's query builder or the Workers Observability query API instead.
 
 The assistant reads through the same query API as the dashboard and sees only what your Cloudflare login can see.
 
