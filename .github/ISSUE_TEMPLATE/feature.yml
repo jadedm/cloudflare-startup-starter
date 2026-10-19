@@ -1,0 +1,17 @@
+name: Feature or change
+description: Suggest something the starter should do differently.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What a startup using this cannot do, or gets wrong, today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+    validations:
+      required: true

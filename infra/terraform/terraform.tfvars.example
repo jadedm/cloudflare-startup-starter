@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars (gitignored) and fill in your own values.
+account_id         = "your-cloudflare-account-id"
+zone_name          = "example.com"
+host               = "app.example.com"
+admin_email        = "you@example.com"
+access_team_domain = "your-team.cloudflareaccess.com"
+access_otp_idp_id  = "your-one-time-pin-identity-provider-id"
+
+# Optional; defaults shown.
+# app_name            = "starter-app"
+# session_cache       = "kv"
+# workers_dev_enabled = false

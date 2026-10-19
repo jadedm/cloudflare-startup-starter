@@ -1,0 +1,11 @@
+.dev.vars
+.DS_Store
+.env
+.env.*
+.wrangler/
+dist/
+infra/terraform/.terraform/
+infra/terraform/*.tfstate*
+infra/terraform/tfplan*
+node_modules/
+infra/terraform/terraform.tfvars

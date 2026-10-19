@@ -1,0 +1,30 @@
+name: Bug
+description: Something does not work as the docs say.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands or requests, with any ids, tokens and hostnames removed.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Node, pnpm, wrangler, Terraform, and the commit you are on.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options: [Local (wrangler dev), Deployed, Terraform, Test suite, Docs]
+    validations:
+      required: true

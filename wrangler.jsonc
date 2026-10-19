@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "starter-app",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-13",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Without this, a browser navigation to /api/auth/callback/google gets
+    // index.html and the Worker never sees the OAuth code.
+    "run_worker_first": ["/api/*", "/admin", "/admin/*"]
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "starter-app-db", "database_id": "local-only", "migrations_dir": "migrations" }
+  ],
+  "kv_namespaces": [{ "binding": "SESSIONS", "id": "local-only" }],
+  "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "starter-app-uploads" }],
+  "vars": {
+    "APP_ENV": "local",
+    "BETTER_AUTH_URL": "https://127.0.0.1:8787",
+    "SESSION_CACHE": "off",
+    "SESSION_CACHE_MAX_TTL": "300",
+    "COOKIE_CACHE": "off",
+    "TURNSTILE_ALLOWED_HOSTNAMES": "example.com",
+    "DEBUG_TIMING": "on",
+    "FAULT": ""
+  }
+}

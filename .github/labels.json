@@ -1,0 +1,7 @@
+[
+  {"name": "bug", "color": "d73a4a", "description": "Something does not work as documented"},
+  {"name": "enhancement", "color": "a2eeef", "description": "A change to what the starter does"},
+  {"name": "docs", "color": "0075ca", "description": "Documentation only"},
+  {"name": "security", "color": "b60205", "description": "Security checks, auth, secrets"},
+  {"name": "terraform", "color": "5319e7", "description": "Infrastructure"}
+]
