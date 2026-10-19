@@ -95,3 +95,9 @@ scripts/tf.sh --token-file <your token file> apply tfplan-destroy
 ```
 
 The first command empties the R2 bucket and writes a destroy plan for you to read. The second deletes everything, including the database. Afterwards delete `infra/terraform/terraform.tfstate*` and every `infra/terraform/tfplan*` file: state and saved plans both hold the Turnstile secret.
+
+## Troubleshooting
+
+**`Provider produced inconsistent result after apply` on `cloudflare_workers_script.app`, about `startup_time_ms`.** Seen with provider 5.28.0 on an update that changed only the frontend: the plan assumed the Worker's measured startup time would not change, and Cloudflare reported a new one. The deploy itself goes through. Confirm with a fresh plan: if it shows no change to `cloudflare_workers_script.app`, the new version is live and state is consistent.
+
+**`cloudflare_d1_database.main` shows an update on every plan.** The provider marks `file_size`, `num_tables` and `version` as unknown each time. Applying it changes nothing.
