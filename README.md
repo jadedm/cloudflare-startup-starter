@@ -9,7 +9,7 @@ Everything here was built and tested on the Workers Free plan and a Free zone. T
 | Piece | What it does |
 |---|---|
 | Worker with Static Assets | Serves a React frontend and the API from one deploy |
-| Better Auth on D1 | Email and password, Google login, sessions in a SQLite database |
+| Better Auth on D1 | Google login, and email and password on Workers Paid; sessions in a SQLite database |
 | KV | Caches sessions so signed-in requests do not wait on the database |
 | R2 | Private file storage, served only through the Worker |
 | Turnstile | Bot check on sign-up and sign-in, verified server-side |

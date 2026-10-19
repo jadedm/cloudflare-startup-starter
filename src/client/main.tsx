@@ -112,13 +112,17 @@ const App = () => {
     <main style={{ fontFamily: "system-ui", maxWidth: 520, margin: "40px auto", padding: "0 16px" }}>
       <h1>starter-app</h1>
       <p>{me}</p>
-      <div hidden={!methods?.password}>
-        <input placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        <input placeholder="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        <div ref={ts.ref} />
-        <button disabled={!ts.token} onClick={() => auth("sign-up")}>Sign up</button>
-        <button disabled={!ts.token} onClick={() => auth("sign-in")}>Sign in</button>
-      </div>
+      {/* Rendered only when on: a Turnstile widget drawn into a hidden block may
+          never produce a token. useTurnstile polls until this ref exists. */}
+      {methods?.password && (
+        <div>
+          <input placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input placeholder="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <div ref={ts.ref} />
+          <button disabled={!ts.token} onClick={() => auth("sign-up")}>Sign up</button>
+          <button disabled={!ts.token} onClick={() => auth("sign-in")}>Sign in</button>
+        </div>
+      )}
       {methods?.google && <button onClick={google}>Sign in with Google</button>}
       {methods && !methods.password && !methods.google && <p>No sign-in method is configured.</p>}
       <button onClick={signOut}>Sign out</button>

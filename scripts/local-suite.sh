@@ -27,6 +27,7 @@ extra_for() {
     fault-kv) echo "--var SESSION_CACHE:kv --var FAULT:kv" ;;
     fault-kv-delete) echo "--var SESSION_CACHE:kv --var SESSION_CACHE_MAX_TTL:60 --var FAULT:kv-delete" ;;
     fault-r2) echo "--var FAULT:r2" ;;
+    fault-d1-hang) echo "--var FAULT:d1-hang" ;;
     first-admin) echo "" ;;
     pw-on) echo "" ;;
     pw-off) echo "--var PASSWORD_LOGIN:off --var TURNSTILE_SECRET:2x0000000000000000000000000000000AA" ;;
@@ -35,7 +36,7 @@ extra_for() {
     *) return 1 ;;
   esac
 }
-ORDER=(base no-worker-first ts-fail ts-spent ts-host kv cookie-cache fault-siteverify fault-d1 fault-kv fault-kv-delete fault-r2 first-admin pw-on pw-off pw-bad no-secret)
+ORDER=(base no-worker-first ts-fail ts-spent ts-host kv cookie-cache fault-siteverify fault-d1 fault-kv fault-kv-delete fault-r2 fault-d1-hang first-admin pw-on pw-off pw-bad no-secret)
 if (( $# > 0 )); then GROUPS_TO_RUN=("$@"); else GROUPS_TO_RUN=("${ORDER[@]}"); fi
 
 if lsof -nP -iTCP:${PORT} -sTCP:LISTEN >/dev/null; then

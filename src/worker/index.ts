@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "./env";
 import { assertFaultAllowed, isolateBindings, timingStore, type Bindings, type D1Timing } from "./bindings";
-import { authFor, googleOn, passwordLoginOn, type Auth } from "./auth";
+import { authFor, forgetAuth, googleOn, passwordLoginOn, type Auth } from "./auth";
 import { accessAllows } from "./access";
 import { apiResourceOf, authErrorCode, errorKindOf, levelForStatus, logEvent, requestIdOf } from "./log";
 
@@ -38,6 +38,18 @@ const isStateChanging = (method: string) => !["GET", "HEAD", "OPTIONS"].includes
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
+const AUTH_READY_MS = 5_000;
+
+// True once Better Auth's setup and schema check have settled, either way;
+// false if they have not within AUTH_READY_MS.
+const authReady = (auth: Auth): Promise<boolean> => {
+  const settled = auth.$context
+    .then((ctx) => ctx.checkSchema?.())
+    .then(() => true, () => true);
+  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), AUTH_READY_MS));
+  return Promise.race([settled, timeout]);
+};
+
 // Better Auth falls back to a public default secret when none is set, so a
 // deploy that skipped the secret would sign sessions with a known key. Refuse
 // to serve instead.
@@ -62,12 +74,17 @@ app.use("*", async (c, next) => {
   // waiting for it, and the instance is shared by every request this isolate
   // serves. Workers drops I/O left pending when the request that started it
   // ends, so if the first request never used auth (/admin, /api/auth-methods),
-  // every later auth request waited on that query forever. Waiting here settles
-  // it inside the request that started it. Its error is left for the auth
-  // routes, which rethrow it on their own call; a failure to reach D1 is not
-  // cached, so the next request checks again.
-  const authContext = await c.get("auth").$context;
-  await authContext.checkSchema?.()?.catch(() => undefined);
+  // every later auth request waited on that query forever (#8). Waiting here
+  // settles it inside the request that started it. Errors are left for the
+  // auth routes, which rethrow them on their own call. The wait is capped: if
+  // the check still never settles (that request was cancelled, or D1 hangs),
+  // the instance is dropped so the next request starts over instead of every
+  // request on the isolate waiting on it.
+  if (!(await authReady(c.get("auth")))) {
+    forgetAuth(c.env);
+    logEvent("error", "auth.not_ready", { requestId: c.get("requestId"), waitedMs: AUTH_READY_MS });
+    return c.json({ error: "temporarily unavailable" }, 503);
+  }
   await timingStore.run(timing, next);
   // Lets a test tell a Worker response from a direct asset response. Copied
   // first because a Response returned by a handler can have immutable headers.
@@ -77,7 +94,13 @@ app.use("*", async (c, next) => {
 
 // Which sign-in methods this deploy offers, so the client shows only those.
 // Public, and registered before the session check below.
-app.get("/api/auth-methods", (c) => c.json({ password: passwordLoginOn(c.env), google: googleOn(c.env) }));
+app.get("/api/auth-methods", (c) => {
+  const methods = { password: passwordLoginOn(c.env), google: googleOn(c.env) };
+  if (!methods.password && !methods.google) {
+    logEvent("error", "config.invalid", { requestId: c.get("requestId"), setting: "sign-in method" });
+  }
+  return c.json(methods);
+});
 
 app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const res = await c.get("auth").handler(c.req.raw);

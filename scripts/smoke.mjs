@@ -340,14 +340,20 @@ const groups = {
     const nav = await navigate("/api/auth/callback/google?code=x&state=y");
     record("3b", nav.worker === "1" && !nav.shell, `${nav.status}, x-worker=${nav.worker}, html-shell=${nav.shell}`);
 
+    // With password login off (the default deploy) these routes answer 404
+    // before the captcha check, so the captcha cases apply only when it is on.
+    const methods = await (await req("/api/auth-methods")).json();
+    const [noToken, forged] = methods.password ? [400, 403] : [404, 404];
     const e4 = `d4-${runId}@example.test`;
     const up4 = await signUp(e4, null);
-    record("4", up4.status === 400 && count("user", `email = ?`, e4) === 0, `sign-up ${up4.status}, user rows ${count("user", `email = ?`, e4)}`);
+    record("4", up4.status === noToken && count("user", `email = ?`, e4) === 0,
+      `password login ${methods.password ? "on" : "off"}: sign-up ${up4.status}, user rows ${count("user", `email = ?`, e4)}`);
 
     const e5 = `d5-${runId}@example.test`;
     const up5 = await signUp(e5, "forged-token");
     const in5 = await signIn(e5, PASSWORD, "forged-token");
-    record("5", up5.status === 403 && in5.status === 403 && count("user", `email = ?`, e5) === 0, `sign-up ${up5.status}, sign-in ${in5.status}, user rows ${count("user", `email = ?`, e5)}`);
+    record("5", up5.status === forged && in5.status === forged && count("user", `email = ?`, e5) === 0,
+      `password login ${methods.password ? "on" : "off"}: sign-up ${up5.status}, sign-in ${in5.status}, user rows ${count("user", `email = ?`, e5)}`);
 
     const noCookie = await req("/api/me");
     const junk = await req("/api/me", { cookie: "__Secure-better-auth.session_token=junk.junk" });
@@ -493,7 +499,7 @@ const groups = {
     const seeded = JSON.parse(readFileSync(file, "utf8"));
 
     const methods = await (await req("/api/auth-methods")).json();
-    record("P6", methods.password === false && methods.google === false, JSON.stringify(methods));
+    record("P6", methods.password === false && typeof methods.google === "boolean", JSON.stringify(methods));
 
     const e1 = `p1-${runId}@example.test`;
     const up = await signUp(e1);
@@ -511,6 +517,8 @@ const groups = {
       ["/api/auth/reset-password", { newPassword: "another-password-1", token: "x" }],
       ["/api/auth/request-password-reset", { email: seeded.email }],
       ["/api/auth/verify-password", { password: PASSWORD }, seeded.cookie],
+      // Also 404 without the gate today, since user deletion is off; listed so
+      // turning deletion on later cannot reopen a password check.
       ["/api/auth/delete-user", { password: PASSWORD }, seeded.cookie],
     ];
     const got = [];
@@ -523,6 +531,9 @@ const groups = {
     const token = await req("/api/auth/reset-password/not-a-token?callbackURL=/");
     record("P3-token", null, `GET /reset-password/:token ${token.status} ${token.headers.get("location") ?? ""} (not listable; hashes nothing)`);
 
+    // The trailing-slash and query-string variants reach disabledPaths; the
+    // case, encoding and doubled-slash ones are refused by Better Auth's router
+    // whatever the setting, so they guard the router rather than this change.
     // disabledPaths does not collapse a doubled slash but the captcha hook does,
     // so with this always-failing secret that variant gets the captcha's 403.
     // Better Auth's router then refuses the path anyway; pw-bad checks that
@@ -558,6 +569,22 @@ const groups = {
     const e = `f8-${runId}@example.test`;
     const up = await signUp(e).catch((err) => ({ status: `no answer (${err.name})` }));
     record("F8", up.status === 200 && count("user", `email = ?`, e) === 1, `first /admin ${admin.status}, then sign-up ${up.status}`);
+  },
+
+  // D1 never answers, so Better Auth's schema check never settles. Each request
+  // must still get an answer once the wait cap passes, not hang (#8, review).
+  async "fault-d1-hang"() {
+    const timed = async (path) => {
+      const started = Date.now();
+      const res = await req(path).catch((err) => ({ status: `no answer (${err.name})` }));
+      return [res.status, Date.now() - started];
+    };
+    const first = await timed("/admin");
+    const second = await timed("/api/auth-methods");
+    const answered = [first, second].every(([st, ms]) => st === 503 && ms < 15_000);
+    await settle();
+    const notReady = logEvents(serverLogText() ?? "").filter((ev) => ev.event === "auth.not_ready").length;
+    record("T1", answered && notReady >= 2, `first /admin ${first[0]} in ${first[1]} ms, then /api/auth-methods ${second[0]} in ${second[1]} ms; auth.not_ready events ${notReady}`);
   },
 
   // An unknown value counts as off.

@@ -1,4 +1,4 @@
-export type Fault = "" | "d1" | "kv" | "kv-delete" | "r2" | "siteverify";
+export type Fault = "" | "d1" | "d1-hang" | "kv" | "kv-delete" | "r2" | "siteverify";
 
 export interface Env {
   DB: D1Database;

@@ -25,8 +25,10 @@ resource "cloudflare_ruleset" "rate_limit" {
 
   rules = [{
     description = "Sign-in attempts per IP"
-    expression  = "(http.request.uri.path eq \"/api/auth/sign-in/email\")"
-    action      = "block"
+    # With password login off, sign-in/email answers 404 at the Worker, so the
+    # zone's one rule goes to sign-in/social, which writes a state row per call.
+    expression = var.password_login == "on" ? "(http.request.uri.path eq \"/api/auth/sign-in/email\")" : "(http.request.uri.path eq \"/api/auth/sign-in/social\")"
+    action     = "block"
     ratelimit = {
       characteristics     = ["ip.src", "cf.colo.id"]
       period              = 10

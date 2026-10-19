@@ -65,6 +65,8 @@ scripts/secrets.sh --token-file <your token file> --account <account id> --scrip
 
 The Worker refuses to serve (503, and a `config.invalid` log event) until `BETTER_AUTH_SECRET` is set to at least 32 characters (the script generates 64), because Better Auth would otherwise sign sessions with a public default key. Use `--script <app_name>` if you changed `app_name`.
 
+With the default `password_login = "off"`, Google is the only sign-in method, so set it up here or the site offers no way to sign in (the Worker logs `config.invalid`). Password login needs Workers Paid: on Free, password hashing is cut off by the 10 ms CPU limit after a short burst.
+
 For Google login, create an OAuth web client in Google Cloud with the redirect URI `https://<host>/api/auth/callback/google`, save the client id and secret to two files, and add `--google-id-file <file> --google-secret-file <file>`. Leave out `--rotate-auth-secret` on later runs; rotating it signs everyone out.
 
 ## 6. Rebuild with your site key and apply again

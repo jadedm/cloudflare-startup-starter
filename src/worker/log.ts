@@ -13,7 +13,8 @@ export type EventName =
   | "admin.access_denied"
   | "error.unhandled"
   | "cache.kv_failed"
-  | "config.invalid";
+  | "config.invalid"
+  | "auth.not_ready";
 
 const write: Record<Level, (line: string) => void> = {
   info: (line) => console.log(line),
