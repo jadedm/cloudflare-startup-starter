@@ -41,13 +41,20 @@ const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 const AUTH_READY_MS = 5_000;
 
 // True once Better Auth's setup and schema check have settled, either way;
-// false if they have not within AUTH_READY_MS.
-const authReady = (auth: Auth): Promise<boolean> => {
+// false if they have not within AUTH_READY_MS. While D1 hangs this makes every
+// route answer 503 after the cap, routes that never use D1 included, rather
+// than leave any request on the isolate waiting forever.
+const authReady = async (auth: Auth): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const settled = auth.$context
     .then((ctx) => ctx.checkSchema?.())
     .then(() => true, () => true);
-  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), AUTH_READY_MS));
-  return Promise.race([settled, timeout]);
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), AUTH_READY_MS);
+  });
+  const ready = await Promise.race([settled, timeout]);
+  clearTimeout(timer);
+  return ready;
 };
 
 // Better Auth falls back to a public default secret when none is set, so a
@@ -81,7 +88,7 @@ app.use("*", async (c, next) => {
   // the instance is dropped so the next request starts over instead of every
   // request on the isolate waiting on it.
   if (!(await authReady(c.get("auth")))) {
-    forgetAuth(c.env);
+    forgetAuth(c.env, c.get("auth"));
     logEvent("error", "auth.not_ready", { requestId: c.get("requestId"), waitedMs: AUTH_READY_MS });
     return c.json({ error: "temporarily unavailable" }, 503);
   }

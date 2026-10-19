@@ -105,7 +105,10 @@ const failingDb = (db: D1Database): D1Database =>
   });
 
 // "kv-delete" breaks only deletes, the case where sign-out cannot clear the cache.
-// Every D1 call waits forever, as a D1 that never answers would.
+// The first D1 query on the isolate waits forever, as a D1 that stopped
+// answering would; later queries go through. That lets a test see both the
+// stuck request and the recovery after the stuck auth instance is dropped.
+let hungOnce = false;
 const hangingDb = (db: D1Database): D1Database => {
   const never = () => new Promise<never>(() => undefined);
   const stmt: D1PreparedStatement = new Proxy({} as D1PreparedStatement, {
@@ -117,8 +120,10 @@ const hangingDb = (db: D1Database): D1Database => {
   });
   return new Proxy(db, {
     get(t, prop, recv) {
-      if (prop === "prepare") return () => stmt;
-      if (prop === "batch" || prop === "exec") return never;
+      if (prop === "prepare" && !hungOnce) {
+        hungOnce = true;
+        return () => stmt;
+      }
       const value = Reflect.get(t, prop, recv);
       return typeof value === "function" ? value.bind(t) : value;
     },

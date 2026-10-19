@@ -110,7 +110,7 @@ variable "create_rate_limit" {
 }
 
 variable "signin_rate_limit_per_10s" {
-  description = "Requests per IP per 10 s to POST /api/auth/sign-in/email before the edge blocks."
+  description = "Requests per IP per 10 s to the sign-in route before the edge blocks: /api/auth/sign-in/email with password login on, /api/auth/sign-in/social with it off."
   type        = number
   default     = 5
 }

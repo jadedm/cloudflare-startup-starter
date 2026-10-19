@@ -129,8 +129,12 @@ export type Auth = ReturnType<typeof createAuth>;
 // behaviour for comparison.
 const authCache = new WeakMap<D1Database, Auth>();
 
-// Drops this isolate's instance so the next request builds a fresh one.
-export const forgetAuth = (env: Env) => authCache.delete(env.DB);
+// Drops this isolate's instance so the next request builds a fresh one. Only
+// the instance that timed out: a request still waiting on an old instance must
+// not throw away the newer one another request has since built.
+export const forgetAuth = (env: Env, auth: Auth) => {
+  if (authCache.get(env.DB) === auth) authCache.delete(env.DB);
+};
 
 export const authFor = (env: Env, b: Bindings): Auth => {
   if (env.AUTH_INSTANCE === "request") return createAuth(env, b);

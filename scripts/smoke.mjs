@@ -571,20 +571,24 @@ const groups = {
     record("F8", up.status === 200 && count("user", `email = ?`, e) === 1, `first /admin ${admin.status}, then sign-up ${up.status}`);
   },
 
-  // D1 never answers, so Better Auth's schema check never settles. Each request
-  // must still get an answer once the wait cap passes, not hang (#8, review).
+  // The first D1 query never answers, so the first auth instance's schema check
+  // never settles. That request must get a 503 once the cap passes, and the
+  // stuck instance must be dropped so the next requests work (#8, review).
+  // Without the drop, every later request would wait on the old check again.
   async "fault-d1-hang"() {
-    const timed = async (path) => {
+    const timed = async (path, opts) => {
       const started = Date.now();
-      const res = await req(path).catch((err) => ({ status: `no answer (${err.name})` }));
+      const res = await req(path, opts).catch((err) => ({ status: `no answer (${err.name})` }));
       return [res.status, Date.now() - started];
     };
     const first = await timed("/admin");
     const second = await timed("/api/auth-methods");
-    const answered = [first, second].every(([st, ms]) => st === 503 && ms < 15_000);
+    const e = `t1-${runId}@example.test`;
+    const up = await signUp(e).catch((err) => ({ status: `no answer (${err.name})` }));
     await settle();
     const notReady = logEvents(serverLogText() ?? "").filter((ev) => ev.event === "auth.not_ready").length;
-    record("T1", answered && notReady >= 2, `first /admin ${first[0]} in ${first[1]} ms, then /api/auth-methods ${second[0]} in ${second[1]} ms; auth.not_ready events ${notReady}`);
+    record("T1", first[0] === 503 && first[1] < 15_000 && second[0] === 200 && up.status === 200 && notReady === 1,
+      `first /admin ${first[0]} in ${first[1]} ms, then /api/auth-methods ${second[0]} in ${second[1]} ms, sign-up ${up.status}; auth.not_ready events ${notReady}`);
   },
 
   // An unknown value counts as off.
