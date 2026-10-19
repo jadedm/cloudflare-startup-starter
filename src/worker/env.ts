@@ -17,6 +17,7 @@ export interface Env {
   DEBUG_TIMING?: "on" | "off";
   TURNSTILE_SECRET: string;
   TURNSTILE_ALLOWED_HOSTNAMES: string;
+  PASSWORD_LOGIN?: "on" | "off";
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   ACCESS_TEAM_DOMAIN?: string;

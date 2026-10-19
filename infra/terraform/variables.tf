@@ -56,6 +56,18 @@ variable "session_cache" {
   }
 }
 
+# Password hashing is cut off by Workers Free's 10 ms CPU limit after a short
+# burst (jadedm/sandbox#119). Turn this on only on Workers Paid; on Free, users
+# sign in with Google.
+variable "password_login" {
+  type    = string
+  default = "off"
+  validation {
+    condition     = contains(["on", "off"], var.password_login)
+    error_message = "password_login must be on or off."
+  }
+}
+
 variable "auth_validate_schema" {
   type    = string
   default = "on"

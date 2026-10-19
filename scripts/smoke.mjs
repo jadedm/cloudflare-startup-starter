@@ -466,6 +466,79 @@ const groups = {
   },
 
   // Better Auth falls back to a public default secret; the Worker must refuse it.
+  // Password login on (the local default). Leaves a password user and its
+  // session for pw-off, which checks they stop working once the setting is off.
+  async "pw-on"() {
+    const methods = await (await req("/api/auth-methods")).json();
+    record("P7", methods.password === true, JSON.stringify(methods));
+
+    const u = await newUser("p-on");
+    record("P28-on", Boolean(u.userId), `advertised password=${methods.password}, sign-up gave user ${Boolean(u.userId)}`);
+    if (stateFile("pw-user")) writeFileSync(stateFile("pw-user"), JSON.stringify({ email: u.email, cookie: u.cookie }), { mode: 0o600 });
+
+    const wrong = await signIn(u.email, "not-the-password");
+    const unknown = await signIn(`p-nobody-${runId}@example.test`);
+    record("P25", wrong.status === 401 && unknown.status === 401, `wrong password ${wrong.status}, unknown user ${unknown.status}`);
+
+    const e24 = `p24-${runId}@example.test`;
+    const pair = await Promise.all([signUp(e24), signUp(e24)]);
+    record("P24", count("user", `email = ?`, e24) === 1, `statuses ${pair.map((r) => r.status).join(",")}, user rows ${count("user", `email = ?`, e24)}`);
+  },
+
+  // Password login off, with a Turnstile secret that always fails: a captcha
+  // check reached before the refusal would answer 403, not 404.
+  async "pw-off"() {
+    const file = stateFile("pw-user");
+    if (!file) throw new Error("pw-off needs SMOKE_STATE_DIR and pw-on run first (scripts/local-suite.sh pw-on pw-off)");
+    const seeded = JSON.parse(readFileSync(file, "utf8"));
+
+    const methods = await (await req("/api/auth-methods")).json();
+    record("P6", methods.password === false && methods.google === false, JSON.stringify(methods));
+
+    const e1 = `p1-${runId}@example.test`;
+    const up = await signUp(e1);
+    record("P1", up.status === 404 && count("user", `email = ?`, e1) === 0, `${up.status}, user rows ${count("user", `email = ?`, e1)}`);
+    record("P28-off", methods.password === false && up.status === 404, `advertised password=${methods.password}, sign-up ${up.status}`);
+
+    const userId = sql(`select id from "user" where email = '${seeded.email}'`)[0]?.id;
+    const sessionsBefore = count("session", `userId = ?`, userId);
+    const inn = await signIn(seeded.email);
+    record("P2", inn.status === 404 && count("session", `userId = ?`, userId) === sessionsBefore,
+      `${inn.status}, sessions ${sessionsBefore} -> ${count("session", `userId = ?`, userId)}`);
+
+    const routes = [
+      ["/api/auth/change-password", { currentPassword: PASSWORD, newPassword: "another-password-1" }, seeded.cookie],
+      ["/api/auth/reset-password", { newPassword: "another-password-1", token: "x" }],
+      ["/api/auth/request-password-reset", { email: seeded.email }],
+      ["/api/auth/verify-password", { password: PASSWORD }, seeded.cookie],
+      ["/api/auth/delete-user", { password: PASSWORD }, seeded.cookie],
+    ];
+    const got = [];
+    for (const [path, body, cookie] of routes) {
+      const res = await req(path, { method: "POST", body, cookie, headers: { "x-captcha-response": PASS_TOKEN } });
+      got.push([path.replace("/api/auth", ""), res.status]);
+    }
+    record("P3", got.every(([, st]) => st === 404), got.map(([r, st]) => `${r} ${st}`).join(", "));
+
+    const token = await req("/api/auth/reset-password/not-a-token?callbackURL=/");
+    record("P3-token", null, `GET /reset-password/:token ${token.status} ${token.headers.get("location") ?? ""} (not listable; hashes nothing)`);
+
+    const variants = ["/api/auth/sign-in/email/", "/api/auth/Sign-In/email", "/api/auth/sign-in/%65mail", "/api/auth/sign-in/email?x=1", "/api/auth//sign-in/email"];
+    const vgot = [];
+    for (const path of variants) {
+      const res = await req(path, { method: "POST", body: { email: seeded.email, password: PASSWORD }, headers: { "x-captcha-response": PASS_TOKEN } });
+      vgot.push([path, res.status]);
+    }
+    record("P4", vgot.every(([, st]) => st === 404), vgot.map(([v, st]) => `${v} ${st}`).join(", "));
+
+    const me = await req("/api/me", { cookie: seeded.cookie });
+    const social = await req("/api/auth/sign-in/social", { method: "POST", body: { provider: "google", callbackURL: "/" } });
+    const out = await req("/api/auth/sign-out", { method: "POST", body: {}, cookie: seeded.cookie });
+    const after = await req("/api/me", { cookie: seeded.cookie });
+    record("P26", me.status === 200 && out.status === 200 && after.status === 401,
+      `existing session ${me.status}, sign-out ${out.status}, then ${after.status}; sign-in/social with no Google keys ${social.status}`);
+  },
+
   // #8: on a fresh server, a first request that does not use auth must not
   // leave Better Auth's schema check pending for the requests after it.
   async "first-admin"() {
@@ -473,6 +546,15 @@ const groups = {
     const e = `f8-${runId}@example.test`;
     const up = await signUp(e).catch((err) => ({ status: `no answer (${err.name})` }));
     record("F8", up.status === 200 && count("user", `email = ?`, e) === 1, `first /admin ${admin.status}, then sign-up ${up.status}`);
+  },
+
+  // An unknown value counts as off.
+  async "pw-bad"() {
+    const methods = await (await req("/api/auth-methods")).json();
+    const e = `p9-${runId}@example.test`;
+    const up = await signUp(e);
+    record("P9", methods.password === false && up.status === 404 && count("user", `email = ?`, e) === 0,
+      `PASSWORD_LOGIN=yes: advertised password=${methods.password}, sign-up ${up.status}`);
   },
 
   async "no-secret"() {

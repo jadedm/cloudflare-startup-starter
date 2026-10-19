@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env } from "./env";
 import { assertFaultAllowed, isolateBindings, timingStore, type Bindings, type D1Timing } from "./bindings";
-import { authFor, type Auth } from "./auth";
+import { authFor, googleOn, passwordLoginOn, type Auth } from "./auth";
 import { accessAllows } from "./access";
 import { apiResourceOf, authErrorCode, errorKindOf, levelForStatus, logEvent, requestIdOf } from "./log";
 
@@ -74,6 +74,10 @@ app.use("*", async (c, next) => {
   c.res = new Response(c.res.body, c.res);
   c.res.headers.set("x-worker", "1");
 });
+
+// Which sign-in methods this deploy offers, so the client shows only those.
+// Public, and registered before the session check below.
+app.get("/api/auth-methods", (c) => c.json({ password: passwordLoginOn(c.env), google: googleOn(c.env) }));
 
 app.on(["GET", "POST"], "/api/auth/*", async (c) => {
   const res = await c.get("auth").handler(c.req.raw);

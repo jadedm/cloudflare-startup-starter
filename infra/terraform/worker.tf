@@ -40,6 +40,7 @@ resource "cloudflare_workers_script" "app" {
     { type = "plain_text", name = "COOKIE_CACHE", text = "off" },
     { type = "plain_text", name = "AUTH_VALIDATE_SCHEMA", text = var.auth_validate_schema },
     { type = "plain_text", name = "AUTH_INSTANCE", text = var.auth_instance },
+    { type = "plain_text", name = "PASSWORD_LOGIN", text = var.password_login },
     { type = "plain_text", name = "TURNSTILE_ALLOWED_HOSTNAMES", text = var.host },
     { type = "plain_text", name = "ACCESS_TEAM_DOMAIN", text = var.access_team_domain },
     { type = "plain_text", name = "ACCESS_AUD", text = cloudflare_zero_trust_access_application.admin.aud },
