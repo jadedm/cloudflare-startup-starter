@@ -523,13 +523,25 @@ const groups = {
     const token = await req("/api/auth/reset-password/not-a-token?callbackURL=/");
     record("P3-token", null, `GET /reset-password/:token ${token.status} ${token.headers.get("location") ?? ""} (not listable; hashes nothing)`);
 
-    const variants = ["/api/auth/sign-in/email/", "/api/auth/Sign-In/email", "/api/auth/sign-in/%65mail", "/api/auth/sign-in/email?x=1", "/api/auth//sign-in/email"];
+    // disabledPaths does not collapse a doubled slash but the captcha hook does,
+    // so with this always-failing secret that variant gets the captcha's 403.
+    // Better Auth's router then refuses the path anyway; pw-bad checks that
+    // with a passing captcha (P4b).
+    const variants = [
+      ["/api/auth/sign-in/email/", [404]],
+      ["/api/auth/Sign-In/email", [404]],
+      ["/api/auth/sign-in/%65mail", [404]],
+      ["/api/auth/sign-in/email?x=1", [404]],
+      ["/api/auth//sign-in/email", [403, 404]],
+    ];
     const vgot = [];
-    for (const path of variants) {
+    for (const [path, allowed] of variants) {
       const res = await req(path, { method: "POST", body: { email: seeded.email, password: PASSWORD }, headers: { "x-captcha-response": PASS_TOKEN } });
-      vgot.push([path, res.status]);
+      vgot.push([path, res.status, allowed.includes(res.status)]);
     }
-    record("P4", vgot.every(([, st]) => st === 404), vgot.map(([v, st]) => `${v} ${st}`).join(", "));
+    const sessionsAfter = count("session", `userId = ?`, userId);
+    record("P4", vgot.every(([, , ok]) => ok) && sessionsAfter === sessionsBefore,
+      `${vgot.map(([v, st]) => `${v} ${st}`).join(", ")}; sessions ${sessionsBefore} -> ${sessionsAfter}`);
 
     const me = await req("/api/me", { cookie: seeded.cookie });
     const social = await req("/api/auth/sign-in/social", { method: "POST", body: { provider: "google", callbackURL: "/" } });
@@ -555,6 +567,15 @@ const groups = {
     const up = await signUp(e);
     record("P9", methods.password === false && up.status === 404 && count("user", `email = ?`, e) === 0,
       `PASSWORD_LOGIN=yes: advertised password=${methods.password}, sign-up ${up.status}`);
+
+    // With a passing captcha, doubled slashes still never reach the endpoint.
+    const doubled = [];
+    for (const path of ["/api/auth//sign-up/email", "/api/auth/sign-up//email"]) {
+      const email = `p4b-${doubled.length}-${runId}@example.test`;
+      const res = await req(path, { method: "POST", body: { email, password: PASSWORD, name: email }, headers: { "x-captcha-response": PASS_TOKEN } });
+      doubled.push([path, res.status, count("user", `email = ?`, email)]);
+    }
+    record("P4b", doubled.every(([, st, n]) => st === 404 && n === 0), doubled.map(([v, st, n]) => `${v} ${st}, user rows ${n}`).join("; "));
   },
 
   async "no-secret"() {
