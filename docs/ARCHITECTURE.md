@@ -39,6 +39,12 @@ Each of these is set in this repo. Each was found by breaking it.
 - **Access requires the one-time PIN login method**, not only the admin's email, and the Worker verifies the Access token itself.
 - **Writes that carry a cookie must name this app** through Origin or Referer. Better Auth checks its own routes; the app checks its own.
 - **Uploads must declare their length** and are capped, and the stored file type comes from the bytes, never the client's header.
+- **The Worker refuses to serve without a real auth secret.** Better Auth falls back to a public default key when none is set.
+
+## Not included
+
+- **Email verification.** Anyone can sign up with an address they do not own. Better Auth will not attach a Google login to that unverified account, so the real owner cannot take it over by signing in with Google, but they are locked out of that address until you add verification (Better Auth's email verification plus an email provider).
+- **Password reset**, for the same reason: it needs an email provider.
 
 ## Free plan limits that apply
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs every local group from scripts/smoke.mjs, each against a freshly booted
 # compiled Worker with that group's config. D1 is migrated from scratch once
-# per suite run; its rows (users, rate limit counters) carry across groups.
+# per suite run into the suite's own folder (not .wrangler/state, so your
+# `pnpm dev` data is left alone); its rows carry across groups.
 # usage: scripts/local-suite.sh [group ...]   (default: all local groups)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -26,10 +27,11 @@ extra_for() {
     fault-kv) echo "--var SESSION_CACHE:kv --var FAULT:kv" ;;
     fault-kv-delete) echo "--var SESSION_CACHE:kv --var SESSION_CACHE_MAX_TTL:60 --var FAULT:kv-delete" ;;
     fault-r2) echo "--var FAULT:r2" ;;
+    no-secret) echo "--var BETTER_AUTH_SECRET:better-auth-secret-12345678901234567890" ;;
     *) return 1 ;;
   esac
 }
-ORDER=(base no-worker-first ts-fail ts-spent ts-host kv cookie-cache fault-siteverify fault-d1 fault-kv fault-kv-delete fault-r2)
+ORDER=(base no-worker-first ts-fail ts-spent ts-host kv cookie-cache fault-siteverify fault-d1 fault-kv fault-kv-delete fault-r2 no-secret)
 if (( $# > 0 )); then GROUPS_TO_RUN=("$@"); else GROUPS_TO_RUN=("${ORDER[@]}"); fi
 
 if lsof -nP -iTCP:${PORT} -sTCP:LISTEN >/dev/null; then
@@ -38,10 +40,11 @@ if lsof -nP -iTCP:${PORT} -sTCP:LISTEN >/dev/null; then
 fi
 
 pnpm -s build
-rm -rf .wrangler/state
+export SMOKE_PERSIST="$LOG_DIR/d1-state"
+rm -rf "$SMOKE_PERSIST"
 export SMOKE_STATE_DIR="$LOG_DIR/state"
 rm -rf "$SMOKE_STATE_DIR" && mkdir -m 700 "$SMOKE_STATE_DIR"
-npx wrangler d1 migrations apply starter-app-db --local >/dev/null
+npx wrangler d1 migrations apply starter-app-db --local --persist-to "$SMOKE_PERSIST" >/dev/null
 
 PID=""
 # PID is npx, which may not pass the signal on to workerd, so wait for the port
@@ -63,7 +66,7 @@ for g in "${GROUPS_TO_RUN[@]}"; do
   flags=$(extra_for "$g") || { echo "unknown group $g" >&2; exit 1; }
   log="$LOG_DIR/$g.log"
   # shellcheck disable=SC2086
-  npx wrangler dev --local-protocol https --ip 127.0.0.1 --port ${PORT} ${flags} >"$log" 2>&1 &
+  npx wrangler dev --local-protocol https --ip 127.0.0.1 --port ${PORT} --persist-to "$SMOKE_PERSIST" ${flags} >"$log" 2>&1 &
   PID=$!
   for _ in $(seq 1 60); do
     grep -q "Ready on" "$log" && break

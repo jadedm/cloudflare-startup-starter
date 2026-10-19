@@ -90,6 +90,12 @@ variable "workers_dev_enabled" {
   default     = false
 }
 
+variable "create_rate_limit" {
+  description = "Create the sign-in rate limit rule. The Free plan allows one rule per zone; set false if the zone already uses it."
+  type        = bool
+  default     = true
+}
+
 variable "signin_rate_limit_per_10s" {
   description = "Requests per IP per 10 s to POST /api/auth/sign-in/email before the edge blocks."
   type        = number

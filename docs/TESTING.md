@@ -1,6 +1,6 @@
 # Testing
 
-`scripts/local-suite.sh` builds the app, migrates a fresh local D1, then boots the compiled Worker once per configuration group and runs `scripts/smoke.mjs` against it over real HTTPS. D1 rows are read directly as ground truth, and the server's log output is checked for the expected events. Any failed case, or a group that runs no cases, exits non-zero.
+`scripts/local-suite.sh` builds the app, migrates a fresh local D1 in its own folder (your `pnpm dev` data in `.wrangler/state` is left alone), then boots the compiled Worker once per configuration group and runs `scripts/smoke.mjs` against it over real HTTPS. D1 rows are read directly as ground truth, and the server's log output is checked for the expected events. Any failed case, or a group that runs no cases, exits non-zero.
 
 ```
 scripts/local-suite.sh                # every group
@@ -24,16 +24,17 @@ scripts/local-suite.sh base kv        # chosen groups
 | 9 | base | No cookie and a tampered cookie get 401; a valid one gets 200 |
 | 10 | base | One user cannot read another user's note |
 | 11 | base | Sign-out deletes the session and the old cookie stops working |
-| 12a | kv | With the KV session cache, a signed-out cookie is refused at once |
+| 12a | kv | The signed-in check went through KV, and after sign-out the old cookie is refused at once |
 | 12b | cookie-cache | Recorded, not judged: how long Better Auth's cookie cache keeps a signed-out cookie working |
 | 13, 13b, 13d | base | Uploads stay private; oversized, mislabelled, chunked uploads and oversized notes are refused |
 | 16-local | base | The session check reads D1 at least once (timing headers on locally) |
 | 18-guard | base | The local config answering a public hostname keeps `/admin` closed |
 | 19a to 19d | base | Foreign Origin, CORS preflight, cross-site writes, and cookie-bearing writes with no Origin or Referer are refused |
-| 22-* | fault-* | With siteverify, D1, KV or R2 down, requests fail closed and leave no partial rows; with KV down, D1 takes over |
+| 22-* | fault-* | With siteverify, D1, KV or R2 down, requests fail closed and leave no partial rows; with KV down, D1 takes over; with KV deletes failing, a signed-out session lives no longer than the cache cap |
+| 23 | no-secret | With Better Auth's public default secret, the Worker answers 503 and logs `config.invalid` |
 | S6 | base | Every outcome above leaves its structured log event, each with a request id |
 | S6-error | fault-d1 | An outage shows up as an `error.unhandled` event |
-| S7 | base | No email, password, session cookie, Turnstile token or auth secret appears anywhere in the server log |
+| S7 | base | No email, password, session cookie name or token value, Turnstile token or auth secret appears anywhere in the server log |
 
 ## Against a deployed app
 

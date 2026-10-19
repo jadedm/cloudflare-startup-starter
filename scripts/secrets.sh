@@ -8,6 +8,7 @@
 # usage: scripts/secrets.sh --token-file <file> --account <id> --script <name>
 #          [--google-id-file <file> --google-secret-file <file>] [--rotate-auth-secret]
 set -euo pipefail
+CALLER_DIR="$PWD"
 cd "$(dirname "$0")/.."
 
 TOKEN_FILE="" ACCOUNT="" SCRIPT="" GID="" GSECRET="" ROTATE=no
@@ -25,6 +26,8 @@ while (( $# > 0 )); do
   shift 2
 done
 [[ -n "$TOKEN_FILE" && -n "$ACCOUNT" && -n "$SCRIPT" ]] || { sed -n 8,9p "$0" >&2; exit 1; }
+# Resolve a relative token path against where the script was run from.
+[[ "$TOKEN_FILE" == /* ]] || TOKEN_FILE="$CALLER_DIR/$TOKEN_FILE"
 [[ -z "$GID" && -z "$GSECRET" ]] || [[ -r "$GID" && -r "$GSECRET" ]] || { echo "give both Google files, readable" >&2; exit 1; }
 
 export CLOUDFLARE_API_TOKEN="$(cat "$TOKEN_FILE")"

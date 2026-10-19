@@ -5,6 +5,7 @@
 # the destroy is `scripts/tf.sh --token-file <file> apply tfplan-destroy`.
 # usage: scripts/teardown-prepare.sh --token-file <file> --account <id>
 set -euo pipefail
+CALLER_DIR="$PWD"
 cd "$(dirname "$0")/.."
 
 TOKEN_FILE="" ACCOUNT=""
@@ -17,6 +18,8 @@ while (( $# > 0 )); do
   esac
 done
 [[ -n "$TOKEN_FILE" && -n "$ACCOUNT" ]] || { sed -n 6p "$0" >&2; exit 1; }
+# Resolve a relative token path against where the script was run from.
+[[ "$TOKEN_FILE" == /* ]] || TOKEN_FILE="$CALLER_DIR/$TOKEN_FILE"
 
 export CLOUDFLARE_API_TOKEN="$(cat "$TOKEN_FILE")"
 export CLOUDFLARE_ACCOUNT_ID="$ACCOUNT"

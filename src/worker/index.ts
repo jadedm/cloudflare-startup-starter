@@ -38,7 +38,19 @@ const isStateChanging = (method: string) => !["GET", "HEAD", "OPTIONS"].includes
 
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 
+// Better Auth falls back to a public default secret when none is set, so a
+// deploy that skipped the secret would sign sessions with a known key. Refuse
+// to serve instead.
+const BETTER_AUTH_DEFAULT_SECRET = "better-auth-secret-12345678901234567890";
+const AUTH_SECRET_MIN_LENGTH = 32;
+const authSecretUsable = (secret: string | undefined): boolean =>
+  typeof secret === "string" && secret.length >= AUTH_SECRET_MIN_LENGTH && secret !== BETTER_AUTH_DEFAULT_SECRET;
+
 app.use("*", async (c, next) => {
+  if (!authSecretUsable(c.env.BETTER_AUTH_SECRET)) {
+    logEvent("error", "config.invalid", { requestId: requestIdOf(c.req.raw), setting: "BETTER_AUTH_SECRET" });
+    return c.json({ error: "server not configured" }, 503);
+  }
   assertFaultAllowed(c.env, c.req.raw);
   const timing: D1Timing = { queries: 0, d1Ms: 0, statements: [], kvOps: 0, kvMs: 0 };
   const b = isolateBindings(c.env);
@@ -79,7 +91,7 @@ app.use("/api/*", async (c, next) => {
   if (!isStateChanging(c.req.method)) return next();
   if (!c.req.header("cookie")) return next();
   if (requestSource(c.req.raw) === new URL(c.env.BETTER_AUTH_URL).origin) return next();
-  logEvent("warn", "request.origin_rejected", { requestId: c.get("requestId"), method: c.req.method, path: c.req.path });
+  logEvent("warn", "request.origin_rejected", { requestId: c.get("requestId"), method: c.req.method, route: c.req.routePath });
   return c.json({ error: "origin not allowed" }, 403);
 });
 
@@ -99,7 +111,7 @@ app.use("/api/*", async (c, next) => {
     c.header("x-d1-statements", timing.statements.join(" | "));
   }
   if (!session) {
-    logEvent("info", "request.unauthenticated", { requestId: c.get("requestId"), method: c.req.method, path: c.req.path });
+    logEvent("info", "request.unauthenticated", { requestId: c.get("requestId"), method: c.req.method, route: c.req.routePath });
     return c.json({ error: "unauthorized" }, 401);
   }
   c.set("userId", session.user.id);
@@ -182,14 +194,15 @@ app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
 
 app.on(["GET", "HEAD"], ["/admin", "/admin/*"], async (c) => {
   if (!(await accessAllows(c.req.raw, c.env))) {
-    logEvent("warn", "admin.access_denied", { requestId: c.get("requestId"), path: c.req.path });
+    logEvent("warn", "admin.access_denied", { requestId: c.get("requestId"), route: c.req.routePath });
     return c.text("forbidden", 403);
   }
   return c.html("<!doctype html><title>Admin</title><h1>Admin</h1>");
 });
 
 app.onError((err, c) => {
-  logEvent("error", "error.unhandled", { requestId: c.get("requestId"), method: c.req.method, path: c.req.path, message: err.message });
+  // The error's name, not its message: a message can carry a key or a value.
+  logEvent("error", "error.unhandled", { requestId: c.get("requestId"), method: c.req.method, route: c.req.routePath, error: err.name });
   return c.json({ error: "internal error" }, 500);
 });
 

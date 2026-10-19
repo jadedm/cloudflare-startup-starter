@@ -4,9 +4,11 @@
 # Worker code and sensitive values are not printed.
 # usage: scripts/plan-audit.sh --token-file <file> [planfile]
 set -euo pipefail
-cd "$(dirname "$0")/.."
 [[ "${1:-}" == "--token-file" && -n "${2:-}" ]] || { sed -n 5p "$0" >&2; exit 1; }
 TOKEN_FILE="$2"; PLAN="${3:-tfplan}"
+# Resolve a relative token path before changing folder.
+[[ "$TOKEN_FILE" == /* ]] || TOKEN_FILE="$PWD/$TOKEN_FILE"
+cd "$(dirname "$0")/.."
 [[ -f "infra/terraform/$PLAN" ]] || { echo "no plan at infra/terraform/$PLAN" >&2; exit 1; }
 
 json=$(scripts/tf.sh --token-file "$TOKEN_FILE" show -json "$PLAN")

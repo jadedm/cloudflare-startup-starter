@@ -15,8 +15,8 @@ Everything here was built and tested on the Workers Free plan and a Free zone. T
 | Turnstile | Bot check on sign-up and sign-in, verified server-side |
 | Rate limit rule | Blocks sign-in floods at the edge, before the Worker runs |
 | Access | One-time PIN login in front of `/admin` |
-| Workers Logs | One JSON event per auth result, refusal and error, with no personal data |
-| Terraform | Every Cloudflare resource above, from an empty account |
+| Workers Logs | One JSON event per auth result, refusal and error; the app's events carry no personal data |
+| Terraform | Every Cloudflare resource above, on an account with a domain |
 
 ## What it costs
 

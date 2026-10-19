@@ -13,7 +13,11 @@ resource "cloudflare_workers_custom_domain" "app" {
 # and timeout, counting by IP and colo, Block only, and only the Path and
 # Verified Bot fields in the expression: no host and no method. So this rule
 # applies to this path on every hostname in the zone.
+# A zone has one rate limit phase entrypoint. If yours already has a rule
+# (from the dashboard or another app), set create_rate_limit = false, or this
+# apply fails; importing the existing ruleset would replace your rule.
 resource "cloudflare_ruleset" "rate_limit" {
+  count   = var.create_rate_limit ? 1 : 0
   zone_id = data.cloudflare_zone.app.zone_id
   name    = "${var.app_name} rate limits"
   kind    = "zone"

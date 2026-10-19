@@ -63,6 +63,19 @@ const logEvents = (text) =>
     .filter(Boolean);
 const settle = () => new Promise((r) => setTimeout(r, 500));
 
+// KV operations the Worker reported for a request (DEBUG_TIMING is on locally).
+const kvOpsOf = (res) => Number(/kv;dur=\d+;desc="(\d+) ops"/.exec(res.headers.get("server-timing") ?? "")?.[1] ?? NaN);
+
+// Every session token value this run saw, so S7 can look for the values
+// themselves in the logs, not only the cookie name.
+const seenTokens = new Set();
+const rememberTokens = (cookie) => {
+  for (const part of (cookie ?? "").split("; ")) {
+    const value = decodeURIComponent(part.split("=").slice(1).join("="));
+    if (part.includes("session_token") && value) seenTokens.add(value.split(".")[0]);
+  }
+};
+
 // D1 is the ground truth for row counts, read outside the Worker. Deployed
 // runs look the database up by name, from a folder with no wrangler config so
 // the local placeholder id is not used, and need CLOUDFLARE_API_TOKEN and
@@ -71,7 +84,8 @@ const settle = () => new Promise((r) => setTimeout(r, 500));
 const D1_NAME = process.env.D1_NAME ?? "starter-app-db";
 const wranglerBin = fileURLToPath(new URL("../node_modules/.bin/wrangler", import.meta.url));
 const sql = (query) => {
-  const where = isLocal ? ["--local"] : ["--remote"];
+  const persist = process.env.SMOKE_PERSIST ? ["--persist-to", process.env.SMOKE_PERSIST] : [];
+  const where = isLocal ? ["--local", ...persist] : ["--remote"];
   const out = execFileSync(wranglerBin, ["d1", "execute", D1_NAME, ...where, "--json", "--command", query], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -150,6 +164,7 @@ const newUser = async (tag) => {
   const res = await signUp(email);
   if (res.status !== 200) throw new Error(`setup sign-up for ${tag} got ${res.status}`);
   const cookie = cookiesOf(res);
+  rememberTokens(cookie);
   const me = await (await req("/api/me", { cookie })).json();
   return { email, cookie, userId: me.userId };
 };
@@ -304,7 +319,9 @@ const groups = {
     const secret = readFileSync(".dev.vars", "utf8").match(/^BETTER_AUTH_SECRET=(.+)$/m)?.[1] ?? "";
     const forbidden = { email: "@example.test", password: PASSWORD, "session cookie": "session_token", "turnstile token": PASS_TOKEN, "auth secret": secret };
     const leaks = Object.entries(forbidden).filter(([, needle]) => needle && text.includes(needle)).map(([name]) => name);
-    record("S7", secret.length > 0 && leaks.length === 0, `leaks: ${leaks.join(", ") || "none"}`);
+    const tokenLeaks = [...seenTokens].filter((tok) => tok.length >= 16 && text.includes(tok)).length;
+    record("S7", secret.length > 0 && seenTokens.size > 0 && leaks.length === 0 && tokenLeaks === 0,
+      `leaks: ${leaks.join(", ") || "none"}; session token values checked ${seenTokens.size}, found in logs ${tokenLeaks}`);
   },
 
   // Deployed, no login needed. Turnstile here is the real widget, so only
@@ -374,10 +391,14 @@ const groups = {
 
   async kv() {
     const u = await newUser("c12a");
-    const cached = (await req("/api/me", { cookie: u.cookie })).status;
+    const before = await req("/api/me", { cookie: u.cookie });
+    const cached = before.status;
+    const kvOps = kvOpsOf(before);
     await req("/api/auth/sign-out", { method: "POST", body: {}, cookie: u.cookie });
     const w = await acceptedWindow(u.cookie, 75);
-    record("12a", cached === 200 && !w.ever, `old cookie ${w.ever ? `accepted until ${w.last}s` : "refused from the first poll"} after sign-out with KV secondary storage`);
+    // kvOps proves the session check went through KV; without it this case
+    // would pass with KV turned off.
+    record("12a", cached === 200 && kvOps > 0 && !w.ever, `kv ops on the signed-in check ${kvOps}; ` + `old cookie ${w.ever ? `accepted until ${w.last}s` : "refused from the first poll"} after sign-out with KV secondary storage`);
   },
 
   async "cookie-cache"() {
@@ -420,22 +441,36 @@ const groups = {
     const up = await signUp(e);
     const cookie = cookiesOf(up);
     const me = await req("/api/me", { cookie });
+    const kvTried = kvOpsOf(me);
     const out = await req("/api/auth/sign-out", { method: "POST", body: {}, cookie });
     const after = await req("/api/me", { cookie });
     // With KV down, D1 is the authority: the app keeps working and a signed-out
     // cookie is refused. Sign-out's own status is recorded, not judged.
-    record("22-kv", up.status === 200 && me.status === 200 && after.status === 401,
-      `sign-up ${up.status}, /api/me ${me.status}, sign-out ${out.status}, old cookie after sign-out ${after.status}`);
+    record("22-kv", up.status === 200 && me.status === 200 && kvTried > 0 && after.status === 401,
+      `sign-up ${up.status}, /api/me ${me.status} after ${kvTried} failed kv ops, sign-out ${out.status}, old cookie after sign-out ${after.status}`);
   },
 
   async "fault-kv-delete"() {
     const u = await newUser("c22kd");
+    const kvOps = kvOpsOf(await req("/api/me", { cookie: u.cookie }));
     const out = await req("/api/auth/sign-out", { method: "POST", body: {}, cookie: u.cookie });
     const rows = count("session", `"userId" = ?`, u.userId);
     const w = await acceptedWindow(u.cookie, 90);
     // The D1 row must go; the stale KV copy must not outlive SESSION_CACHE_MAX_TTL (60 here).
-    record("22-kv-delete", out.status === 200 && rows === 0 && w.last <= 62,
+    // The cookie must have been served from KV at least once after sign-out;
+    // otherwise KV was not in the path and the cap was never tested.
+    record("22-kv-delete", kvOps > 0 && out.status === 200 && rows === 0 && w.ever && w.last <= 62,
       `sign-out ${out.status}, D1 session rows ${rows}, stale cookie ${w.ever ? `accepted until ${w.last}s` : "never accepted"} (cap 60)`);
+  },
+
+  // Better Auth falls back to a public default secret; the Worker must refuse it.
+  async "no-secret"() {
+    const me = await req("/api/me");
+    const up = await signUp(`ns-${runId}@example.test`);
+    await settle();
+    const events = logEvents(serverLogText() ?? "").filter((ev) => ev.event === "config.invalid" && ev.setting === "BETTER_AUTH_SECRET");
+    record("23", me.status === 503 && up.status === 503 && events.length > 0,
+      `/api/me ${me.status}, sign-up ${up.status}, config.invalid events ${events.length}`);
   },
 
   async "fault-r2"() {

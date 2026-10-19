@@ -5,6 +5,10 @@ import type { Env } from "./env";
 import type { Bindings } from "./bindings";
 import { logEvent } from "./log";
 
+// A KV error message can contain the key, and the key is a session token, so
+// only the error's name is logged.
+const errorName = (e: unknown): string => (e instanceof Error ? e.name : "unknown");
+
 // KV rejects expirationTtl below 60 seconds.
 const KV_MIN_TTL = 60;
 const KV_DEFAULT_MAX_TTL = 300;
@@ -38,7 +42,7 @@ const kvSessionStore = (kv: KVNamespace, maxTtl: number): SecondaryStorage => ({
     const [value] = await kv.get(key).then(
       (v) => [v] as const,
       (e: unknown) => {
-        logEvent("warn", "cache.kv_failed", { op: "get", message: String(e) });
+        logEvent("warn", "cache.kv_failed", { op: "get", error: errorName(e) });
         return [null] as const;
       },
     );
@@ -47,12 +51,12 @@ const kvSessionStore = (kv: KVNamespace, maxTtl: number): SecondaryStorage => ({
   async set(key, value, ttl) {
     const expirationTtl = Math.max(Math.min(ttl ?? maxTtl, maxTtl), KV_MIN_TTL);
     await kv.put(key, value, { expirationTtl }).catch((e: unknown) => {
-      logEvent("warn", "cache.kv_failed", { op: "put", message: String(e) });
+      logEvent("warn", "cache.kv_failed", { op: "put", error: errorName(e) });
     });
   },
   async delete(key) {
     await kv.delete(key).catch((e: unknown) => {
-      logEvent("warn", "cache.kv_failed", { op: "delete", message: String(e) });
+      logEvent("warn", "cache.kv_failed", { op: "delete", error: errorName(e) });
     });
   },
 });

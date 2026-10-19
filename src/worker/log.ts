@@ -12,7 +12,8 @@ export type EventName =
   | "upload.rejected"
   | "admin.access_denied"
   | "error.unhandled"
-  | "cache.kv_failed";
+  | "cache.kv_failed"
+  | "config.invalid";
 
 const write: Record<Level, (line: string) => void> = {
   info: (line) => console.log(line),
