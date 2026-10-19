@@ -109,6 +109,8 @@ const req = (path, { method = "GET", body, headers = {}, cookie, raw, noOrigin =
   fetch(base + path, {
     method,
     redirect: "manual",
+    // A hung Worker fails the case instead of stalling the suite (#8).
+    signal: AbortSignal.timeout(30_000),
     headers: {
       // Cloudflare's edge answers 403 to a client-sent cf-connecting-ip, so the
       // per-call address is only used against local wrangler dev.
@@ -464,6 +466,15 @@ const groups = {
   },
 
   // Better Auth falls back to a public default secret; the Worker must refuse it.
+  // #8: on a fresh server, a first request that does not use auth must not
+  // leave Better Auth's schema check pending for the requests after it.
+  async "first-admin"() {
+    const admin = await req("/admin");
+    const e = `f8-${runId}@example.test`;
+    const up = await signUp(e).catch((err) => ({ status: `no answer (${err.name})` }));
+    record("F8", up.status === 200 && count("user", `email = ?`, e) === 1, `first /admin ${admin.status}, then sign-up ${up.status}`);
+  },
+
   async "no-secret"() {
     const me = await req("/api/me");
     const up = await signUp(`ns-${runId}@example.test`);

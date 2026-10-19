@@ -58,6 +58,16 @@ app.use("*", async (c, next) => {
   c.set("timing", timing);
   c.set("b", b);
   c.set("auth", authFor(c.env, b));
+  // Building the instance starts Better Auth's schema check, a D1 query, without
+  // waiting for it, and the instance is shared by every request this isolate
+  // serves. Workers drops I/O left pending when the request that started it
+  // ends, so if the first request never used auth (/admin, /api/auth-methods),
+  // every later auth request waited on that query forever. Waiting here settles
+  // it inside the request that started it. Its error is left for the auth
+  // routes, which rethrow it on their own call; a failure to reach D1 is not
+  // cached, so the next request checks again.
+  const authContext = await c.get("auth").$context;
+  await authContext.checkSchema?.()?.catch(() => undefined);
   await timingStore.run(timing, next);
   // Lets a test tell a Worker response from a direct asset response. Copied
   // first because a Response returned by a handler can have immutable headers.

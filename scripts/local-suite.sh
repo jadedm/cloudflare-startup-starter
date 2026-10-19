@@ -27,11 +27,12 @@ extra_for() {
     fault-kv) echo "--var SESSION_CACHE:kv --var FAULT:kv" ;;
     fault-kv-delete) echo "--var SESSION_CACHE:kv --var SESSION_CACHE_MAX_TTL:60 --var FAULT:kv-delete" ;;
     fault-r2) echo "--var FAULT:r2" ;;
+    first-admin) echo "" ;;
     no-secret) echo "--var BETTER_AUTH_SECRET:better-auth-secret-12345678901234567890" ;;
     *) return 1 ;;
   esac
 }
-ORDER=(base no-worker-first ts-fail ts-spent ts-host kv cookie-cache fault-siteverify fault-d1 fault-kv fault-kv-delete fault-r2 no-secret)
+ORDER=(base no-worker-first ts-fail ts-spent ts-host kv cookie-cache fault-siteverify fault-d1 fault-kv fault-kv-delete fault-r2 first-admin no-secret)
 if (( $# > 0 )); then GROUPS_TO_RUN=("$@"); else GROUPS_TO_RUN=("${ORDER[@]}"); fi
 
 if lsof -nP -iTCP:${PORT} -sTCP:LISTEN >/dev/null; then
