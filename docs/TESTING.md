@@ -12,10 +12,12 @@ scripts/local-suite.sh base kv        # chosen groups
 The `pg-*` groups run the Postgres option against a local Docker Postgres, `starter-pg` on port 54330, which the suite creates or starts. Each such group gets a fresh database migrated from `migrations-pg/` as the owner, with Supabase's default grants to `anon` and `authenticated` set first, and the Worker connects as `app_worker`. Rows are read from Postgres instead of D1. Three checks need no Worker:
 
 ```
-scripts/pg-checks.sh         # the worker role, what it and the Data API roles are refused, migrations, the password script
+scripts/pg-checks.sh         # the worker role, what it and the Data API roles are refused, migrations, the password script, pg-setup.sh
 scripts/check-pg-schema.sh   # migrations-pg/0001 matches the schema Better Auth generates for Postgres
 node scripts/check-sql.mjs   # the query template numbers values per driver and leaves SQL text alone
 ```
+
+`scripts/check-tf-guard.sh` needs neither Docker nor Terraform: it runs `scripts/tf.sh` against a fake `terraform` and checks that a build carrying Turnstile's test site key is refused except with `--first-deploy` on a workspace with no widget, that destroys and saved plans pass, and that state files end up mode 600 without making the workspace folder unreadable.
 
 ## Cases
 
