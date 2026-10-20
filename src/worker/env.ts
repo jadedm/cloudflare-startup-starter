@@ -12,7 +12,7 @@ export interface Env {
   SESSION_CACHE: "kv" | "off";
   SESSION_CACHE_MAX_TTL: string;
   COOKIE_CACHE: "on" | "off";
-  AUTH_VALIDATE_SCHEMA?: "on" | "off";
+  AUTH_VALIDATE_SCHEMA?: "" | "on" | "off";
   AUTH_INSTANCE?: "isolate" | "request";
   // d1 (the default when unset) or pg. A string, since a typo must be caught
   // at run time (dbDriverOf in db.ts), not trusted as one of the two.

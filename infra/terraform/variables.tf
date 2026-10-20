@@ -70,11 +70,12 @@ variable "password_login" {
 }
 
 variable "auth_validate_schema" {
-  type    = string
-  default = "on"
+  description = "Better Auth's schema check: on, off, or empty for the driver's default (on for D1, where it runs once per isolate; off for pg, where the auth instance is per request and the check would run on every request)."
+  type        = string
+  default     = ""
   validation {
-    condition     = contains(["on", "off"], var.auth_validate_schema)
-    error_message = "auth_validate_schema must be on or off."
+    condition     = contains(["", "on", "off"], var.auth_validate_schema)
+    error_message = "auth_validate_schema must be on, off, or empty for the driver's default."
   }
 }
 
