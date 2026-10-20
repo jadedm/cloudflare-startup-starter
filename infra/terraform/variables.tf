@@ -183,7 +183,17 @@ variable "supabase_ca_file" {
   type        = string
   default     = "certs/supabase-ca-2021.crt"
   validation {
-    condition     = var.db_driver != "pg" || fileexists(var.supabase_ca_file)
-    error_message = "supabase_ca_file does not exist."
+    condition     = var.db_driver != "pg" || var.supabase_ca_certificate_id != "" || fileexists(var.supabase_ca_file)
+    error_message = "supabase_ca_file does not exist (it is not needed when supabase_ca_certificate_id is set)."
+  }
+}
+
+variable "supabase_ca_certificate_id" {
+  description = "Optional. The id of a CA certificate already on the account (GET /accounts/<id>/mtls_certificates) to verify Supabase against, instead of uploading supabase_ca_file. Needed for a second app on an account that already holds Supabase's CA, since the account refuses a second copy. The certificate then belongs to the other app: destroying that app's copy breaks this one's connection. Never give this app's own certificate id: the plan would point Hyperdrive at it and then destroy it."
+  type        = string
+  default     = ""
+  validation {
+    condition     = can(regex("^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$", var.supabase_ca_certificate_id))
+    error_message = "supabase_ca_certificate_id must be a certificate id (a UUID), or empty to upload supabase_ca_file."
   }
 }

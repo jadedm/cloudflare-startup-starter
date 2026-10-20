@@ -132,6 +132,38 @@ drop role app_worker;
 drop role shaped_owner;
 SQL
 
+# 34: scripts/pg-setup.sh, the one command that prepares a new database (the
+# live Supabase test runs it). A first run creates, migrates and sets the
+# password; a second finds the database, applies nothing, and stops (exit 1)
+# at the password step because the file exists. Each refusal is matched by its
+# message, so a refusal for another reason (usage, connection) does not pass.
+setup_dir=$(mktemp -d)
+setup_cleanup() {
+  rm -rf "$setup_dir"
+  pg_psql -d postgres -c "drop database if exists starter_setup with (force)" -c 'drop database if exists "Case34-X" with (force)'
+}
+trap 'setup_cleanup; rm -rf "$pw_dir"' EXIT
+setup_args=(--host 127.0.0.1 --port "$PG_PORT" --tls off --owner-password-file "$PG_STATE_DIR/owner-password")
+# Run from another folder with a relative --out: the file must land there.
+setup_out=$(cd "$setup_dir" && "$OLDPWD/scripts/pg-setup.sh" "${setup_args[@]}" --database starter_setup --out pw 2>&1) && setup_exit=0 || setup_exit=$?
+check "34 first run" "$setup_exit $(grep -cE '^(created database starter_setup|applied 5 of 5|login check: current_user=app_worker, bypassrls=false)$' <<<"$setup_out")" "0 3"
+check "34 relative --out" "$([[ -f "$setup_dir/pw" ]] && echo here || echo elsewhere) $(stat -f '%Lp' "$setup_dir/pw" 2>/dev/null)" "here 600"
+check "34 password not printed" "$(grep -cF "$(cat "$setup_dir/pw")" <<<"$setup_out" || true)" "0"
+setup_again=$(scripts/pg-setup.sh "${setup_args[@]}" --database starter_setup --out "$setup_dir/pw" 2>&1) && again_exit=0 || again_exit=$?
+check "34 second run" "$again_exit $(grep -cE '^(database starter_setup already exists|nothing to apply)$|already exists; remove it first' <<<"$setup_again")" "1 3"
+refusal() { scripts/pg-setup.sh "${setup_args[@]}" "$@" 2>&1 >/dev/null | grep -cF -- "$REFUSAL" || true; }
+# A name Postgres would take once quoted, so only the name check stops it.
+REFUSAL="--name must be a lowercase identifier"
+check "34 bad name refused" "$(refusal --database 'Case34-X' --out "$setup_dir/x") $(docker exec -i "$PG_CONTAINER" psql -U postgres -qtAc "select count(*) from pg_database where datname = 'Case34-X'")" "1 0"
+REFUSAL="--database must be the app's own database, not postgres or a template"
+check "34 postgres refused" "$(refusal --database postgres --out "$setup_dir/x")" "1"
+check "34 template refused" "$(refusal --database template1 --out "$setup_dir/x")" "1"
+REFUSAL="flag --out has no value"
+check "34 flag without a value" "$(refusal --database starter_setup --out)" "1"
+setup_cleanup
+trap 'rm -rf "$pw_dir"' EXIT
+pg_psql -d postgres -c "drop role app_worker"
+
 pg_reset
 echo "pass $pass, fail $fail"
 [[ $fail -eq 0 && $pass -gt 0 ]]

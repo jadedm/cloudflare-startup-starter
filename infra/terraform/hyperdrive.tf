@@ -12,9 +12,11 @@
 # file because names must be unique. The account refuses a second copy of the
 # same certificate, so changing app_name, which renames it with the same file,
 # cannot go through create-first: destroy the old certificate with the
-# Hyperdrive config first, or keep app_name.
+# Hyperdrive config first, or keep app_name. For the same reason a second app
+# on an account that already holds this CA cannot upload it again; it reuses
+# the existing one through supabase_ca_certificate_id, and nothing is uploaded.
 resource "cloudflare_mtls_certificate" "supabase_ca" {
-  count        = var.db_driver == "pg" ? 1 : 0
+  count        = var.db_driver == "pg" && var.supabase_ca_certificate_id == "" ? 1 : 0
   account_id   = var.account_id
   name         = "${var.app_name}-supabase-ca-${substr(sha256(file(var.supabase_ca_file)), 0, 8)}"
   ca           = true
@@ -46,7 +48,7 @@ resource "cloudflare_hyperdrive_config" "supabase" {
   }
 
   mtls = {
-    ca_certificate_id = cloudflare_mtls_certificate.supabase_ca[0].id
+    ca_certificate_id = var.supabase_ca_certificate_id != "" ? var.supabase_ca_certificate_id : one(cloudflare_mtls_certificate.supabase_ca[*].id)
     sslmode           = "verify-full"
   }
 }
