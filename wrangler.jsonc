@@ -6,7 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   // Off so a plain `wrangler deploy` does not open a *.workers.dev URL, or
   // version preview URLs, that skip the zone's rate limit and Access.
-  // Terraform sets the same (workers_dev_enabled, infra/terraform/worker.tf).
+  // Terraform's default is the same (workers_dev_enabled, infra/terraform/worker.tf).
   "workers_dev": false,
   "preview_urls": false,
   "observability": { "enabled": true },
