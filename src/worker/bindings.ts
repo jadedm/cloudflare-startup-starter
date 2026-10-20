@@ -105,6 +105,37 @@ const failingDb = (db: D1Database): D1Database =>
   });
 
 // "kv-delete" breaks only deletes, the case where sign-out cannot clear the cache.
+// The first D1 query on the isolate waits forever, as a D1 that stopped
+// answering would; later queries go through. That lets a test see both the
+// stuck request and the recovery after the stuck auth instance is dropped.
+let hungOnce = false;
+const hangingDb = (db: D1Database): D1Database => {
+  const never = () => new Promise<never>(() => undefined);
+  const stmt: D1PreparedStatement = new Proxy({} as D1PreparedStatement, {
+    get(_t, prop) {
+      if (prop === "bind") return () => stmt;
+      if (prop === "then") return undefined;
+      return never;
+    },
+  });
+  return new Proxy(db, {
+    get(t, prop, recv) {
+      if (prop === "prepare" && !hungOnce) {
+        hungOnce = true;
+        return () => stmt;
+      }
+      const value = Reflect.get(t, prop, recv);
+      return typeof value === "function" ? value.bind(t) : value;
+    },
+  });
+};
+
+const dbFor = (db: D1Database, fault: Env["FAULT"]): D1Database => {
+  if (fault === "d1") return failingDb(db);
+  if (fault === "d1-hang") return hangingDb(db);
+  return db;
+};
+
 const failingDeletes = (kv: KVNamespace): KVNamespace =>
   new Proxy(kv, {
     get(t, prop, recv) {
@@ -152,7 +183,7 @@ export const assertFaultAllowed = (env: Env, req: Request): void => {
 const buildBindings = (env: Env) => {
   const db = timedDb(env.DB);
   return {
-    db: env.FAULT === "d1" ? failingDb(db) : db,
+    db: dbFor(db, env.FAULT),
     sessions: timedKv(kvFor(env)),
     uploads: env.FAULT === "r2" ? failingProxy(env.UPLOADS, "R2") : env.UPLOADS,
   };

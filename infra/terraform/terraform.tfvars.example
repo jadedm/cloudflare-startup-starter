@@ -9,4 +9,5 @@ access_otp_idp_id  = "your-one-time-pin-identity-provider-id"
 # Optional; defaults shown.
 # app_name            = "starter-app"
 # session_cache       = "kv"
+# password_login      = "off"   # "on" needs Workers Paid; off means Google sign-in only
 # workers_dev_enabled = false

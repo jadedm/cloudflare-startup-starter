@@ -57,6 +57,28 @@ const kvSessionStore = (kv: KVNamespace, maxTtl: number): SecondaryStorage => ({
   },
 });
 
+// Workers Free stops password hashing at its 10 ms CPU limit after a short
+// burst (jadedm/sandbox#119), so password login is on only when PASSWORD_LOGIN
+// is exactly "on", which needs Workers Paid. Anything else counts as off.
+export const passwordLoginOn = (env: Env) => env.PASSWORD_LOGIN === "on";
+
+// Better Auth's own switch guards sign-up and sign-in only; the other routes
+// that hash or check a password ignore it. disabledPaths refuses all of them
+// with 404 before the captcha check or any query. The paths are relative to
+// basePath. GET /reset-password/:token cannot be listed (exact matches only),
+// but it hashes nothing and no reset token can be issued with this list in place.
+const PASSWORD_PATHS = [
+  "/sign-up/email",
+  "/sign-in/email",
+  "/change-password",
+  "/reset-password",
+  "/request-password-reset",
+  "/verify-password",
+  "/delete-user",
+];
+
+export const googleOn = (env: Env) => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+
 const googleProvider = (env: Env) => {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return {};
   return { google: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET } };
@@ -73,7 +95,8 @@ export const createAuth = (env: Env, b: Bindings) =>
     baseURL: env.BETTER_AUTH_URL,
     basePath: "/api/auth",
     trustedOrigins: [env.BETTER_AUTH_URL],
-    emailAndPassword: { enabled: true },
+    emailAndPassword: { enabled: passwordLoginOn(env) },
+    disabledPaths: passwordLoginOn(env) ? [] : PASSWORD_PATHS,
     socialProviders: googleProvider(env),
     secondaryStorage:
       env.SESSION_CACHE === "kv" ? kvSessionStore(b.sessions, maxTtlFrom(env.SESSION_CACHE_MAX_TTL)) : undefined,
@@ -105,6 +128,13 @@ export type Auth = ReturnType<typeof createAuth>;
 // one instance per isolate is safe. AUTH_INSTANCE=request keeps the old
 // behaviour for comparison.
 const authCache = new WeakMap<D1Database, Auth>();
+
+// Drops this isolate's instance so the next request builds a fresh one. Only
+// the instance that timed out: a request still waiting on an old instance must
+// not throw away the newer one another request has since built.
+export const forgetAuth = (env: Env, auth: Auth) => {
+  if (authCache.get(env.DB) === auth) authCache.delete(env.DB);
+};
 
 export const authFor = (env: Env, b: Bindings): Auth => {
   if (env.AUTH_INSTANCE === "request") return createAuth(env, b);

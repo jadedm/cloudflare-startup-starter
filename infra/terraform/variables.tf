@@ -56,6 +56,19 @@ variable "session_cache" {
   }
 }
 
+# Password hashing is cut off by Workers Free's 10 ms CPU limit after a short
+# burst (jadedm/sandbox#119). Turn this on only on Workers Paid; on Free, users
+# sign in with Google.
+variable "password_login" {
+  description = "on offers email and password sign-in (needs Workers Paid); off leaves Google sign-in only."
+  type        = string
+  default     = "off"
+  validation {
+    condition     = contains(["on", "off"], var.password_login)
+    error_message = "password_login must be on or off."
+  }
+}
+
 variable "auth_validate_schema" {
   type    = string
   default = "on"
@@ -97,7 +110,7 @@ variable "create_rate_limit" {
 }
 
 variable "signin_rate_limit_per_10s" {
-  description = "Requests per IP per 10 s to POST /api/auth/sign-in/email before the edge blocks."
+  description = "Requests per IP per 10 s to the sign-in route before the edge blocks: /api/auth/sign-in/email with password login on, /api/auth/sign-in/social with it off."
   type        = number
   default     = 5
 }

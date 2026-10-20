@@ -31,6 +31,11 @@ scripts/local-suite.sh base kv        # chosen groups
 | 18-guard | base | The local config answering a public hostname keeps `/admin` closed |
 | 19a to 19d | base | Foreign Origin, CORS preflight, cross-site writes, and cookie-bearing writes with no Origin or Referer are refused |
 | 22-* | fault-* | With siteverify, D1, KV or R2 down, requests fail closed and leave no partial rows; with KV down, D1 takes over; with KV deletes failing, a signed-out session lives no longer than the cache cap |
+| F8 | first-admin | On a fresh server, a first request that does not use auth (`/admin`) does not leave later sign-ups waiting forever |
+| T1 | fault-d1-hang | When the first auth instance's schema check never settles, that request gets 503 after 5 s with `auth.not_ready`, and the next requests work on a fresh instance |
+| P7, P24, P25, P28-on | pw-on | Password login on: advertised and working; one user for two concurrent sign-ups; wrong password and unknown user both 401 |
+| P1 to P4, P6, P26, P28-off | pw-off | Password login off: every password route answers 404 before the captcha check, and no user or session is made; other auth (sessions, sign-out) still works |
+| P9, P4b | pw-bad | An unknown `PASSWORD_LOGIN` value counts as off; doubled-slash paths never reach an endpoint |
 | 23 | no-secret | With Better Auth's public default secret, the Worker answers 503 and logs `config.invalid` |
 | S6 | base | Every outcome above leaves its structured log event, each with a request id |
 | S6-error | fault-d1 | An outage shows up as an `error.unhandled` event |
@@ -43,7 +48,7 @@ export CLOUDFLARE_API_TOKEN="$(cat <your token file>)" CLOUDFLARE_ACCOUNT_ID=<ac
 node scripts/smoke.mjs deployed-anon https://<host>
 ```
 
-Covers the cases that need no login: static serving, the callback route, missing and forged Turnstile tokens, unauthenticated requests, CORS, and the Access redirect on `/admin`. Real Turnstile and Google sign-in need a browser.
+Covers the cases that need no login: static serving, the callback route, missing and forged Turnstile tokens, unauthenticated requests, CORS, and the Access redirect on `/admin`. With password login off, the default, cases 4 and 5 expect 404 from the password routes instead of the captcha errors; the group reads which it is from `/api/auth-methods`. Real Turnstile and Google sign-in need a browser.
 
 ## Measuring
 

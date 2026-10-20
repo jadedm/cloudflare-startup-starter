@@ -1,4 +1,4 @@
-export type Fault = "" | "d1" | "kv" | "kv-delete" | "r2" | "siteverify";
+export type Fault = "" | "d1" | "d1-hang" | "kv" | "kv-delete" | "r2" | "siteverify";
 
 export interface Env {
   DB: D1Database;
@@ -17,6 +17,7 @@ export interface Env {
   DEBUG_TIMING?: "on" | "off";
   TURNSTILE_SECRET: string;
   TURNSTILE_ALLOWED_HOSTNAMES: string;
+  PASSWORD_LOGIN?: "on" | "off";
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   ACCESS_TEAM_DOMAIN?: string;

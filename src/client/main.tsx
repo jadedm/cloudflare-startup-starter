@@ -44,8 +44,25 @@ const post = (path: string, body: unknown, captcha?: string) =>
     body: JSON.stringify(body),
   });
 
+type Methods = { password: boolean; google: boolean };
+const NO_METHODS: Methods = { password: false, google: false };
+
+// The Worker says which sign-in methods this deploy offers. If it cannot be
+// read, nothing is offered rather than a form that would fail.
+const loadMethods = async (): Promise<[Methods, string | null]> => {
+  const res = await fetch("/api/auth-methods").catch(() => null);
+  if (!res?.ok) return [NO_METHODS, `sign-in methods: ${res?.status ?? "network error"}`];
+  const data: unknown = await res.json().catch(() => null);
+  const valid =
+    typeof data === "object" && data !== null &&
+    typeof (data as Methods).password === "boolean" && typeof (data as Methods).google === "boolean";
+  if (!valid) return [NO_METHODS, "sign-in methods: unreadable"];
+  return [data as Methods, null];
+};
+
 const App = () => {
   const ts = useTurnstile();
+  const [methods, setMethods] = useState<Methods | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [me, setMe] = useState<string>("signed out");
@@ -60,6 +77,10 @@ const App = () => {
 
   useEffect(() => {
     refresh();
+    loadMethods().then(([m, error]) => {
+      setMethods(m);
+      if (error) note(error);
+    });
   }, []);
 
   const auth = async (kind: "sign-up" | "sign-in") => {
@@ -91,12 +112,19 @@ const App = () => {
     <main style={{ fontFamily: "system-ui", maxWidth: 520, margin: "40px auto", padding: "0 16px" }}>
       <h1>starter-app</h1>
       <p>{me}</p>
-      <input placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-      <input placeholder="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-      <div ref={ts.ref} />
-      <button disabled={!ts.token} onClick={() => auth("sign-up")}>Sign up</button>
-      <button disabled={!ts.token} onClick={() => auth("sign-in")}>Sign in</button>
-      <button onClick={google}>Sign in with Google</button>
+      {/* Rendered only when on: a Turnstile widget drawn into a hidden block may
+          never produce a token. useTurnstile polls until this ref exists. */}
+      {methods?.password && (
+        <div>
+          <input placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input placeholder="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <div ref={ts.ref} />
+          <button disabled={!ts.token} onClick={() => auth("sign-up")}>Sign up</button>
+          <button disabled={!ts.token} onClick={() => auth("sign-in")}>Sign in</button>
+        </div>
+      )}
+      {methods?.google && <button onClick={google}>Sign in with Google</button>}
+      {methods && !methods.password && !methods.google && <p>No sign-in method is configured.</p>}
       <button onClick={signOut}>Sign out</button>
       <p>
         Avatar: <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
