@@ -1,0 +1,49 @@
+// The Postgres option for local runs: wrangler.jsonc plus a Hyperdrive binding
+// and DB_DRIVER=pg. `wrangler dev -c wrangler.pg.jsonc`, or the pg-* groups of
+// scripts/local-suite.sh.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "starter-app",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-13",
+  "compatibility_flags": ["nodejs_compat"],
+  // Off so a plain `wrangler deploy` does not open a *.workers.dev URL, or
+  // version preview URLs, that skip the zone's rate limit and Access.
+  // Terraform's default is the same (workers_dev_enabled, infra/terraform/worker.tf).
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Without this, a browser navigation to /api/auth/callback/google gets
+    // index.html and the Worker never sees the OAuth code.
+    "run_worker_first": ["/api/*", "/admin", "/admin/*"]
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "starter-app-db", "database_id": "local-only", "migrations_dir": "migrations" }
+  ],
+  "kv_namespaces": [{ "binding": "SESSIONS", "id": "local-only" }],
+  "r2_buckets": [{ "binding": "UPLOADS", "bucket_name": "starter-app-uploads" }],
+  // Local dev connects straight to the Docker database as the Worker's own role
+  // (scripts/local-suite.sh creates both); deployed, Terraform binds the real
+  // Hyperdrive config. The password is a local-only placeholder.
+  "hyperdrive": [
+    { "binding": "HYPERDRIVE", "id": "local-only", "localConnectionString": "postgres://app_worker:localonly-worker@127.0.0.1:54330/starter_local" }
+  ],
+  "vars": {
+    "APP_ENV": "local",
+    "BETTER_AUTH_URL": "https://127.0.0.1:8787",
+    "SESSION_CACHE": "off",
+    "SESSION_CACHE_MAX_TTL": "300",
+    "COOKIE_CACHE": "off",
+    // On locally, where there is no CPU limit, so the suite can create users.
+    // A deploy is off unless Terraform's password_login says on (Workers Paid).
+    "PASSWORD_LOGIN": "on",
+    "TURNSTILE_ALLOWED_HOSTNAMES": "example.com",
+    "DEBUG_TIMING": "on",
+    "DB_DRIVER": "pg",
+    "FAULT": ""
+  }
+}

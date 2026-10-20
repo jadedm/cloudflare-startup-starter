@@ -40,10 +40,12 @@ scripts/build-worker.sh --turnstile-sitekey 1x00000000000000000000AA
 
 ```
 scripts/tf.sh --token-file <your token file> init
-scripts/tf.sh --token-file <your token file> plan -out=tfplan
+scripts/tf.sh --token-file <your token file> --first-deploy plan -out=tfplan
 scripts/plan-audit.sh --token-file <your token file>
 scripts/tf.sh --token-file <your token file> apply tfplan
 ```
+
+`--first-deploy` lets this one plan carry the test site key. `tf.sh` refuses a build with a test key otherwise, and refuses it even with the flag once the Turnstile widget is in state, so a test build cannot reach a live site by accident.
 
 `plan-audit.sh` prints counts by action, every destroy, and which attributes each update changes, without printing the Worker's code or any secret. Read it before you apply. State stays in `infra/terraform`, gitignored and mode 600, because it holds the Turnstile widget's secret.
 

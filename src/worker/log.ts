@@ -14,7 +14,8 @@ export type EventName =
   | "error.unhandled"
   | "cache.kv_failed"
   | "config.invalid"
-  | "auth.not_ready";
+  | "auth.not_ready"
+  | "db.unavailable";
 
 const write: Record<Level, (line: string) => void> = {
   info: (line) => console.log(line),

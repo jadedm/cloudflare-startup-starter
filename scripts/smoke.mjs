@@ -2,7 +2,7 @@
 // usage: node scripts/smoke.mjs <group> [baseUrl]
 // Each group needs the server started with a matching config; scripts/local-suite.sh
 // does that. Exits non-zero if any case fails or a group runs no cases.
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,11 @@ import { Agent, request, setGlobalDispatcher } from "undici";
 
 const [group, base = "https://127.0.0.1:8787"] = process.argv.slice(2);
 if (!group) throw new Error("usage: smoke.mjs <group> [baseUrl]");
+// Postgres groups read rows from the local container; without it they would
+// silently count D1 rows instead.
+const PG_CONTAINER = process.env.SMOKE_PG_CONTAINER;
+const PG_DB = process.env.SMOKE_PG_DB ?? "starter_local";
+if (group.startsWith("pg-") && !PG_CONTAINER) throw new Error(`${group} needs SMOKE_PG_CONTAINER (scripts/local-suite.sh sets it)`);
 
 const ORIGIN = new URL(base).origin;
 const isLocal = ["127.0.0.1", "localhost"].includes(new URL(base).hostname);
@@ -83,7 +88,13 @@ const rememberTokens = (cookie) => {
 // The database name: wrangler.jsonc locally, `${app_name}-db` when deployed.
 const D1_NAME = process.env.D1_NAME ?? "starter-app-db";
 const wranglerBin = fileURLToPath(new URL("../node_modules/.bin/wrangler", import.meta.url));
+// As the owner, inside the container, so the check does not go through the
+// role under test. Rows come back as JSON.
+const pgArgs = (query) => ["exec", PG_CONTAINER, "psql", "-U", "postgres", "-d", PG_DB, "-v", "ON_ERROR_STOP=1", "-qtAc", query];
+const pgRows = (query) =>
+  JSON.parse(execFileSync("docker", pgArgs(`select coalesce(json_agg(t), '[]') from (${query}) t`), { encoding: "utf8" }));
 const sql = (query) => {
+  if (PG_CONTAINER) return pgRows(query);
   const persist = process.env.SMOKE_PERSIST ? ["--persist-to", process.env.SMOKE_PERSIST] : [];
   const where = isLocal ? ["--local", ...persist] : ["--remote"];
   const out = execFileSync(wranglerBin, ["d1", "execute", D1_NAME, ...where, "--json", "--command", query], {
@@ -645,6 +656,164 @@ async function acceptedWindow(cookie, maxSeconds) {
   }
   return { ever, last };
 }
+
+// The Postgres option (#4). The base, kv and first-admin cases run unchanged
+// against Postgres; the groups after them cover what only Postgres has.
+groups["pg-base"] = groups.base;
+groups["pg-kv"] = groups.kv;
+groups["pg-first-admin"] = groups["first-admin"];
+
+const timed = async (path, opts) => {
+  const started = Date.now();
+  const res = await req(path, opts).catch((err) => ({ status: `no answer (${err.name})` }));
+  return { status: res.status, ms: Date.now() - started };
+};
+
+// Every route refuses with 503 and one config.invalid event names the setting.
+const refusesToServe = async (id, setting) => {
+  const calls = [await timed("/api/auth-methods"), await timed("/api/me"), await timed("/api/auth/sign-up/email", {
+    method: "POST", body: { email: `${id}-${runId}@example.test`, password: PASSWORD, name: "x" }, headers: { "x-captcha-response": PASS_TOKEN },
+  })];
+  await settle();
+  const events = logEvents(serverLogText() ?? "").filter((ev) => ev.event === "config.invalid" && ev.setting === setting);
+  record(id, calls.every((c) => c.status === 503 && c.ms < 5_000) && events.length >= calls.length,
+    `${calls.map((c) => `${c.status} in ${c.ms} ms`).join(", ")}; config.invalid ${setting} events ${events.length}`);
+};
+groups["pg-invalid"] = () => refusesToServe("PG3", "DB_DRIVER");
+groups["pg-no-binding"] = () => refusesToServe("PG4", "HYPERDRIVE");
+
+// The database cannot be reached: a closed port (refused at once) or an
+// address that never answers (only the connect timeout ends it). Auth routes
+// fail with a 5xx inside the cap; a route that needs no database still answers.
+// Better Auth answers its own routes' database errors itself (a 500), so only
+// the deadline case reaches 503 db.unavailable there.
+const databaseDown = async (id) => {
+  const methods = await timed("/api/auth-methods");
+  const up = await timed("/api/auth/sign-up/email", {
+    method: "POST", body: { email: `${id}-${runId}@example.test`, password: PASSWORD, name: "x" }, headers: { "x-captcha-response": PASS_TOKEN },
+  });
+  // A cookie that passes the signature check, so the session lookup reaches
+  // the database; a forged one is refused before any query.
+  const file = stateFile("signed-cookie");
+  if (!file) throw new Error(`${id} needs SMOKE_STATE_DIR and pg-base run first (scripts/local-suite.sh pg-base ${group})`);
+  const me = await timed("/api/me", { cookie: readFileSync(file, "utf8") });
+  await settle();
+  const unavailable = logEvents(serverLogText() ?? "").filter((ev) => ev.event === "db.unavailable" && ev.resource === "me").length;
+  // Inside the 8 s Postgres deadline (index.ts) plus a margin.
+  const fiveXx = (c) => typeof c.status === "number" && c.status >= 500 && c.ms < 10_000;
+  // The session check on /api/me is the app's own route: 503 with the event.
+  record(id, methods.status === 200 && fiveXx(up) && me.status === 503 && me.ms < 10_000 && unavailable === 1,
+    `auth-methods ${methods.status} in ${methods.ms} ms, sign-up ${up.status} in ${up.ms} ms, /api/me ${me.status} in ${me.ms} ms; db.unavailable on me ${unavailable}`);
+};
+groups["pg-down"] = () => databaseDown("PG14");
+groups["pg-blackhole"] = () => databaseDown("PG27a");
+
+// As the owner, outside the Worker: holds an exclusive lock on "note" for the
+// given seconds, so every notes query waits on it. Resolves once the lock is
+// taken, with { released }, a promise for its release. Wrapped in an object
+// because an async function returning the promise itself would wait for it.
+const holdNoteLock = async (seconds) => {
+  const child = spawn("docker", pgArgs(`begin; lock table "note" in access exclusive mode; select pg_sleep(${seconds}); commit;`), { stdio: "ignore" });
+  const released = new Promise((resolve) => child.on("exit", resolve));
+  for (let i = 0; i < 50; i++) {
+    const held = sql(`select count(*)::int as n from pg_locks l join pg_class c on c.oid = l.relation where c.relname = 'note' and l.mode = 'AccessExclusiveLock' and l.granted`)[0].n;
+    if (held > 0) return { released };
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error("note lock was never taken");
+};
+const workerConnections = () => sql(`select count(*)::int as n from pg_stat_activity where usename = 'app_worker'`)[0].n;
+// Polls until the Worker's connections are back to the baseline, up to 5 s.
+const backToBaseline = async (baseline) => {
+  const started = Date.now();
+  let n = workerConnections();
+  while (n > baseline && Date.now() - started < 5_000) {
+    await new Promise((r) => setTimeout(r, 250));
+    n = workerConnections();
+  }
+  return { ok: n <= baseline, n, ms: Date.now() - started };
+};
+const postNote = (cookie, body = { body: "pg note ?" }) => req("/api/notes", { method: "POST", body, cookie });
+
+groups["pg-extra"] = async () => {
+  const baseline = workerConnections();
+  const a = await newUser("pga");
+  const b = await newUser("pgb");
+  const first = await (await postNote(a.cookie)).json();
+
+  // 25: overlapping requests on one isolate while every notes query waits.
+  const { released } = await holdNoteLock(2);
+  const started = Date.now();
+  const burst = await Promise.all(Array.from({ length: 20 }, (_, i) =>
+    i % 2 ? postNote(a.cookie).then((r) => r.status) : req(`/api/notes/${first.id}`, { cookie: a.cookie }).then((r) => r.status)));
+  const waited = Date.now() - started;
+  await released;
+  const after = await req(`/api/notes/${first.id}`, { cookie: a.cookie });
+  await settle();
+  const crossRequest = (serverLogText() ?? "").includes("on behalf of a different request");
+  record("PG25", burst.every((st) => st === 200 || st === 201) && waited >= 1_500 && after.status === 200 && !crossRequest,
+    `20 overlapping: ${[...new Set(burst)].join(",")} after ${waited} ms; then ${after.status}; cross-request error ${crossRequest}`);
+  const c25 = await backToBaseline(baseline);
+  record("PG26-burst", c25.ok, `worker connections ${c25.n} (baseline ${baseline}) ${c25.ms} ms after the burst`);
+
+  // 26: back to baseline after a success, a 4xx and an aborted client.
+  await postNote(a.cookie);
+  const cOk = await backToBaseline(baseline);
+  const bad = await postNote(a.cookie, { body: "" });
+  const c4xx = await backToBaseline(baseline);
+  const { released: releasedAbort } = await holdNoteLock(3);
+  const aborted = await fetch(base + "/api/notes", {
+    method: "POST", headers: { "content-type": "application/json", origin: ORIGIN, cookie: a.cookie },
+    body: JSON.stringify({ body: "aborted" }), signal: AbortSignal.timeout(500),
+  }).then((r) => r.status, (e) => e.name);
+  await releasedAbort;
+  const cAbort = await backToBaseline(baseline);
+  record("PG26", cOk.ok && bad.status === 400 && c4xx.ok && aborted === "TimeoutError" && cAbort.ok,
+    `after success ${cOk.n}, after ${bad.status} ${c4xx.n}, after aborted client (${aborted}) ${cAbort.n}; baseline ${baseline}`);
+
+  // 27: a query past the timeout, then a backend killed mid-request.
+  const { released: releasedSlow } = await holdNoteLock(7);
+  const slow = await timed("/api/notes", { method: "POST", body: { body: "slow" }, cookie: a.cookie });
+  await releasedSlow;
+  const recovered = await postNote(a.cookie);
+  // The database cancelled it (statement_timeout), so the write never landed.
+  const slowRows = sql(`select count(*)::int as n from "note" where body = 'slow'`)[0].n;
+  const { released: releasedKill } = await holdNoteLock(4);
+  const pending = timed("/api/notes", { method: "POST", body: { body: "killed" }, cookie: a.cookie });
+  await new Promise((r) => setTimeout(r, 1_000));
+  const killed = sql(`select count(*)::int as n from (select pg_terminate_backend(pid) from pg_stat_activity where usename = 'app_worker' and wait_event_type = 'Lock') t`)[0].n;
+  const kill = await pending;
+  await releasedKill;
+  const recovered2 = await postNote(a.cookie);
+  await settle();
+  const unavailable = logEvents(serverLogText() ?? "").filter((ev) => ev.event === "db.unavailable").length;
+  record("PG27", slow.status === 503 && slow.ms < 4_500 && slowRows === 0 && recovered.status === 201 && killed === 1 && kill.status === 503 && recovered2.status === 201 && unavailable >= 2,
+    `slow query ${slow.status} in ${slow.ms} ms, rows stored ${slowRows}, then ${recovered.status}; killed ${killed} backend: ${kill.status} in ${kill.ms} ms, then ${recovered2.status}; db.unavailable events ${unavailable}`);
+
+  // 28: the note's owner is the session's user, whatever the body says.
+  const forged = await (await postNote(a.cookie, { body: "forged", userId: b.userId })).json();
+  const asB = await req(`/api/notes/${forged.id}`, { cookie: b.cookie });
+  const asA = await req(`/api/notes/${forged.id}`, { cookie: a.cookie });
+  const owner = sql(`select "userId" from "note" where id = '${forged.id}'`)[0]?.userId;
+  record("PG28", asB.status === 404 && asA.status === 200 && owner === a.userId, `as B ${asB.status}, as A ${asA.status}, stored under A ${owner === a.userId}`);
+
+  // 12: a ? in a bound value is stored as given.
+  const q = await (await req(`/api/notes/${first.id}`, { cookie: a.cookie })).json();
+  record("PG12", q.body === "pg note ?", `read back ${JSON.stringify(q.body)}`);
+
+  // 31: the table is gone while the schema check is off; then it is back.
+  execFileSync("docker", pgArgs(`alter table "note" rename to "note_gone"`));
+  const gone = await timed("/api/notes", { method: "POST", body: { body: "gone" }, cookie: a.cookie });
+  execFileSync("docker", pgArgs(`alter table "note_gone" rename to "note"`));
+  const back = await postNote(a.cookie);
+  const c31 = await backToBaseline(baseline);
+  record("PG31", gone.status === 500 && gone.ms < 5_000 && back.status === 201 && c31.ok,
+    `missing table ${gone.status} in ${gone.ms} ms, restored ${back.status}, worker connections ${c31.n}`);
+
+  // 22: the database password never reaches the logs.
+  const leaked = (serverLogText() ?? "").includes("localonly");
+  record("PG22-log", !leaked, `local database password in the server log: ${leaked}`);
+};
 
 const run = groups[group];
 if (!run) throw new Error(`unknown group ${group}; known: ${Object.keys(groups).join(", ")}`);

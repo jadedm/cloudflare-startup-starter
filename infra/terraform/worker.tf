@@ -28,7 +28,9 @@ resource "cloudflare_workers_script" "app" {
     }
   }
 
-  bindings = [
+  # DB_DRIVER and HYPERDRIVE exist only on db_driver = "pg"; unset means D1,
+  # so a D1 deploy's bindings are the same as before the Postgres option.
+  bindings = concat([
     { type = "d1", name = "DB", id = cloudflare_d1_database.main.id },
     { type = "kv_namespace", name = "SESSIONS", namespace_id = cloudflare_workers_kv_namespace.sessions.id },
     { type = "r2_bucket", name = "UPLOADS", bucket_name = cloudflare_r2_bucket.uploads.name },
@@ -46,7 +48,10 @@ resource "cloudflare_workers_script" "app" {
     { type = "plain_text", name = "ACCESS_AUD", text = cloudflare_zero_trust_access_application.admin.aud },
     { type = "plain_text", name = "DEBUG_TIMING", text = var.debug_timing },
     { type = "plain_text", name = "FAULT", text = "" },
-  ]
+    ], flatten([for h in cloudflare_hyperdrive_config.supabase : [
+      { type = "plain_text", name = "DB_DRIVER", text = "pg" },
+      { type = "hyperdrive", name = "HYPERDRIVE", id = h.id },
+  ]]))
 
   # BETTER_AUTH_SECRET, TURNSTILE_SECRET and the Google client stay with
   # wrangler secret (scripts/secrets.sh) so their values never enter state.

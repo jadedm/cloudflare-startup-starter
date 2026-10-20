@@ -1,15 +1,18 @@
-import { Hono } from "hono";
+import { Hono, type Context, type Next } from "hono";
 import type { Env } from "./env";
 import { assertFaultAllowed, isolateBindings, timingStore, type Bindings, type D1Timing } from "./bindings";
 import { authFor, forgetAuth, googleOn, passwordLoginOn, type Auth } from "./auth";
 import { accessAllows } from "./access";
 import { apiResourceOf, authErrorCode, errorKindOf, levelForStatus, logEvent, requestIdOf } from "./log";
+import { d1AppDb, dbDriverOf, DbUnavailable, pgAppDb, sql, type AppDb } from "./db";
+import { hyperdriveOf, requestPool } from "./pg";
 
 type Vars = {
   requestId: string;
   timing: D1Timing;
   b: Bindings;
   auth: Auth;
+  appDb: AppDb;
   userId: string;
 };
 
@@ -65,19 +68,10 @@ const AUTH_SECRET_MIN_LENGTH = 32;
 const authSecretUsable = (secret: string | undefined): boolean =>
   typeof secret === "string" && secret.length >= AUTH_SECRET_MIN_LENGTH && secret !== BETTER_AUTH_DEFAULT_SECRET;
 
-app.use("*", async (c, next) => {
-  if (!authSecretUsable(c.env.BETTER_AUTH_SECRET)) {
-    logEvent("error", "config.invalid", { requestId: requestIdOf(c.req.raw), setting: "BETTER_AUTH_SECRET" });
-    return c.json({ error: "server not configured" }, 503);
-  }
-  assertFaultAllowed(c.env, c.req.raw);
-  const timing: D1Timing = { queries: 0, d1Ms: 0, statements: [], kvOps: 0, kvMs: 0 };
-  const b = isolateBindings(c.env);
-  c.set("requestId", requestIdOf(c.req.raw));
-  c.set("timing", timing);
-  c.set("b", b);
-  c.set("auth", authFor(c.env, b));
-  // Building the instance starts Better Auth's schema check, a D1 query, without
+type Ctx = Context<{ Bindings: Env; Variables: Vars }>;
+
+const serve = async (c: Ctx, next: Next, timing: D1Timing) => {
+  // Building the instance starts Better Auth's schema check, a database query, without
   // waiting for it, and the instance is shared by every request this isolate
   // serves. Workers drops I/O left pending when the request that started it
   // ends, so if the first request never used auth (/admin, /api/auth-methods),
@@ -97,6 +91,76 @@ app.use("*", async (c, next) => {
   // first because a Response returned by a handler can have immutable headers.
   c.res = new Response(c.res.body, c.res);
   c.res.headers.set("x-worker", "1");
+};
+
+// pg's Workers socket cannot abort a TCP connect that never completes: its
+// destroy writes to the socket first, and that write waits for the connect.
+// So the pool's connect timeout never fires for an address that does not
+// answer, and Better Auth's queries have no timeout of ours either. Past this
+// deadline the request answers 503; the stuck work is left to the runtime,
+// which ends it with the request's waitUntil budget. Nothing it started is
+// cancelled, so a write could in principle still land after the 503; the
+// database's own statement_timeout (3 s, migrations-pg/0005) keeps every query
+// well inside the deadline, so it is usually a stalled connect that reaches
+// it, with nothing written. A request that runs several slow statements in a
+// row can still pass it after an earlier one committed.
+const PG_DEADLINE_MS = 8_000;
+
+const withinDeadline = async (c: Ctx, work: Promise<Response | void>): Promise<Response | void> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"deadline">((resolve) => {
+    timer = setTimeout(() => resolve("deadline"), PG_DEADLINE_MS);
+  });
+  const outcome = await Promise.race([work, deadline]);
+  clearTimeout(timer);
+  if (outcome !== "deadline") return outcome;
+  logEvent("error", "db.unavailable", { requestId: c.get("requestId"), method: c.req.method, resource: apiResourceOf(c.req.path), error: "deadline" });
+  return c.json({ error: "temporarily unavailable" }, 503);
+};
+
+// Better Auth logs a failed session lookup and throws a generic 500 in its
+// place, so the cause is gone by the time it reaches here. On Postgres the
+// lookup's only I/O is the database (a KV cache failure falls back without
+// throwing), so that 500 means the database could not answer and is reported
+// as such. On D1 it stays an unhandled error, as before.
+const sessionLookupError = (env: Env, e: unknown): unknown => {
+  const internal = (e as { statusCode?: unknown } | null)?.statusCode === 500;
+  if (dbDriverOf(env) === "pg" && internal) return new DbUnavailable(e);
+  return e;
+};
+
+// The setting that makes this deploy unable to serve, or null when it can.
+const misconfigured = (env: Env): string | null => {
+  if (!authSecretUsable(env.BETTER_AUTH_SECRET)) return "BETTER_AUTH_SECRET";
+  const driver = dbDriverOf(env);
+  if (!driver) return "DB_DRIVER";
+  if (driver === "pg" && !hyperdriveOf(env)) return "HYPERDRIVE";
+  return null;
+};
+
+app.use("*", async (c, next) => {
+  const setting = misconfigured(c.env);
+  if (setting) {
+    logEvent("error", "config.invalid", { requestId: requestIdOf(c.req.raw), setting });
+    return c.json({ error: "server not configured" }, 503);
+  }
+  assertFaultAllowed(c.env, c.req.raw);
+  const timing: D1Timing = { queries: 0, d1Ms: 0, statements: [], kvOps: 0, kvMs: 0 };
+  const b = isolateBindings(c.env);
+  c.set("requestId", requestIdOf(c.req.raw));
+  c.set("timing", timing);
+  c.set("b", b);
+  const hyperdrive = dbDriverOf(c.env) === "pg" ? hyperdriveOf(c.env) : null;
+  const pool = hyperdrive ? requestPool(hyperdrive) : null;
+  // Closed however the request ends, so no connection outlives it.
+  try {
+    c.set("appDb", pool ? pgAppDb(pool) : d1AppDb(b.db));
+    c.set("auth", authFor(c.env, b, pool));
+    if (!pool) return await serve(c, next, timing);
+    return await withinDeadline(c, serve(c, next, timing));
+  } finally {
+    if (pool) c.executionCtx.waitUntil(pool.end());
+  }
 });
 
 // Which sign-in methods this deploy offers, so the client shows only those.
@@ -141,7 +205,12 @@ app.use("/api/*", async (c, next) => {
 
 app.use("/api/*", async (c, next) => {
   const started = Date.now();
-  const session = await c.get("auth").api.getSession({ headers: c.req.raw.headers });
+  const session = await c
+    .get("auth")
+    .api.getSession({ headers: c.req.raw.headers })
+    .catch((e: unknown) => {
+      throw sessionLookupError(c.env, e);
+    });
   // Measurement headers, off unless DEBUG_TIMING is "on": they show how long
   // the session check took and which D1 statements it ran.
   if (c.env.DEBUG_TIMING === "on") {
@@ -173,20 +242,15 @@ app.post("/api/notes", async (c) => {
   if (body.body.length > NOTE_MAX_CHARS) return c.json({ error: "too large" }, 413);
   const id = crypto.randomUUID();
   await c
-    .get("b")
-    .db.prepare(`insert into "note" ("id", "userId", "body", "createdAt") values (?, ?, ?, ?)`)
-    .bind(id, c.get("userId"), body.body, new Date().toISOString())
-    .run();
+    .get("appDb")
+    .run(sql`insert into "note" ("id", "userId", "body", "createdAt") values (${id}, ${c.get("userId")}, ${body.body}, ${new Date().toISOString()})`);
   return c.json({ id }, 201);
 });
 
 app.get("/api/notes/:id", async (c) => {
-  const { results } = await c
-    .get("b")
-    .db.prepare(`select "id", "body", "createdAt" from "note" where "id" = ? and "userId" = ?`)
-    .bind(c.req.param("id"), c.get("userId"))
-    .all();
-  const note = results[0];
+  const [note] = await c
+    .get("appDb")
+    .all(sql`select "id", "body", "createdAt" from "note" where "id" = ${c.req.param("id")} and "userId" = ${c.get("userId")}`);
   if (!note) return c.json({ error: "not found" }, 404);
   return c.json(note);
 });
@@ -245,6 +309,10 @@ app.on(["GET", "HEAD"], ["/admin", "/admin/*"], async (c) => {
 });
 
 app.onError((err, c) => {
+  if (err instanceof DbUnavailable) {
+    logEvent("error", "db.unavailable", { requestId: c.get("requestId"), method: c.req.method, resource: apiResourceOf(c.req.path), error: errorKindOf(err) });
+    return c.json({ error: "temporarily unavailable" }, 503);
+  }
   // A fixed error category, never the message: a message can carry a key or a value.
   logEvent("error", "error.unhandled", { requestId: c.get("requestId"), method: c.req.method, resource: apiResourceOf(c.req.path), error: errorKindOf(err) });
   return c.json({ error: "internal error" }, 500);
