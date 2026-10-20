@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { captcha } from "better-auth/plugins";
 import type { SecondaryStorage } from "better-auth";
+import type pg from "pg";
 import type { Env } from "./env";
 import type { Bindings } from "./bindings";
 import { errorKindOf, logEvent } from "./log";
@@ -19,7 +20,8 @@ const maxTtlFrom = (raw: string | undefined): number => {
 
 // KV has no atomic read-and-delete and no atomic counter, so it must never hold
 // single-use verification values (OAuth state) or rate-limit counters. Those
-// stay in D1 (see verification and rateLimit below); these two methods throw
+// stay in the database, D1 or Postgres (see verification and rateLimit
+// below); these two methods throw
 // so any path that still reaches them fails loudly instead of racing.
 const notOnKv = (op: string) => () => {
   throw new Error(`${op} is not safe on KV`);
@@ -88,9 +90,18 @@ const googleProvider = (env: Env) => {
 const siteVerifyOverride = (env: Env) =>
   env.FAULT === "siteverify" ? "http://127.0.0.1:9/siteverify" : undefined;
 
-export const createAuth = (env: Env, b: Bindings) =>
+// On D1 the instance is kept per isolate, so the schema check runs once. On
+// Postgres the instance is per request (authFor), so the check would run on
+// every request; it is off there unless AUTH_VALIDATE_SCHEMA is exactly "on".
+const schemaCheckOn = (env: Env, pool: pg.Pool | null): boolean => {
+  if (pool) return env.AUTH_VALIDATE_SCHEMA === "on";
+  return env.AUTH_VALIDATE_SCHEMA !== "off";
+};
+
+// pool is the request's Postgres pool on DB_DRIVER=pg, null on D1.
+export const createAuth = (env: Env, b: Bindings, pool: pg.Pool | null) =>
   betterAuth({
-    database: b.db,
+    database: pool ?? b.db,
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
     basePath: "/api/auth",
@@ -108,7 +119,7 @@ export const createAuth = (env: Env, b: Bindings) =>
     },
     advanced: {
       ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
-      database: { validateSchema: env.AUTH_VALIDATE_SCHEMA !== "off" },
+      database: { validateSchema: schemaCheckOn(env, pool) },
     },
     plugins: [
       captcha({
@@ -136,11 +147,13 @@ export const forgetAuth = (env: Env, auth: Auth) => {
   if (authCache.get(env.DB) === auth) authCache.delete(env.DB);
 };
 
-export const authFor = (env: Env, b: Bindings): Auth => {
-  if (env.AUTH_INSTANCE === "request") return createAuth(env, b);
+// A Postgres pool is made per request (pg.ts), so an instance built on it
+// cannot outlive the request either, and is never cached.
+export const authFor = (env: Env, b: Bindings, pool: pg.Pool | null): Auth => {
+  if (pool || env.AUTH_INSTANCE === "request") return createAuth(env, b, pool);
   const cached = authCache.get(env.DB);
   if (cached) return cached;
-  const built = createAuth(env, b);
+  const built = createAuth(env, b, null);
   authCache.set(env.DB, built);
   return built;
 };

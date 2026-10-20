@@ -7,7 +7,15 @@ scripts/local-suite.sh                # every group
 scripts/local-suite.sh base kv        # chosen groups
 ```
 
-`fault-d1` reuses a signed cookie the `base` group saves, so run it after `base` in the same command.
+`fault-d1` reuses a signed cookie the `base` group saves, so run it after `base` in the same command; `pg-down` and `pg-blackhole` do the same with `pg-base`.
+
+The `pg-*` groups run the Postgres option against a local Docker Postgres, `starter-pg` on port 54330, which the suite creates or starts. Each such group gets a fresh database migrated from `migrations-pg/` as the owner, with Supabase's default grants to `anon` and `authenticated` set first, and the Worker connects as `app_worker`. Rows are read from Postgres instead of D1. Three checks need no Worker:
+
+```
+scripts/pg-checks.sh         # the worker role, what it and the Data API roles are refused, migrations, the password script
+scripts/check-pg-schema.sh   # migrations-pg/0001 matches the schema Better Auth generates for Postgres
+node scripts/check-sql.mjs   # the query template numbers values per driver and leaves SQL text alone
+```
 
 ## Cases
 
@@ -40,6 +48,15 @@ scripts/local-suite.sh base kv        # chosen groups
 | S6 | base | Every outcome above leaves its structured log event, each with a request id |
 | S6-error | fault-d1 | An outage shows up as an `error.unhandled` event |
 | S7 | base | No email, password, session cookie name or token value, Turnstile token or auth secret appears anywhere in the server log |
+| base cases, 12a, F8 | pg-base, pg-kv, pg-first-admin | The same cases on Postgres through the Worker's own role |
+| PG3, PG4 | pg-invalid, pg-no-binding | An unknown `DB_DRIVER`, or `pg` with no Hyperdrive binding, makes every route answer 503 with `config.invalid` |
+| PG14 | pg-down | With the database refusing connections, Better Auth's routes fail with a 5xx at once, `/api/me` answers 503 with `db.unavailable`, and `/api/auth-methods` still answers |
+| PG27a | pg-blackhole | With the database address never answering, auth routes answer 503 at the 8 s deadline instead of waiting |
+| PG25, PG26 | pg-extra | 20 overlapping requests on one isolate all complete while a lock holds them; the Worker's connections go back to zero after a burst, a success, a 4xx and an aborted client. Workers closes a request's sockets when it ends, so PG26 also passes with the pool's close removed: it checks the runtime as much as the code |
+| PG27 | pg-extra | A write held past the database's 3 s statement timeout is cancelled (503 `db.unavailable`, and the row is not stored); a backend killed mid-request also answers 503; the next request works |
+| PG28, PG12 | pg-extra | A note is stored under the session's user whatever the body says; a `?` in a value is stored as given |
+| PG31 | pg-extra | With the notes table gone, notes routes answer 500 quickly and work again once it is back |
+| PG22-log | pg-extra | The database password never appears in the server log |
 
 ## Against a deployed app
 

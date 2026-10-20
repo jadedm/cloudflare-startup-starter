@@ -20,6 +20,16 @@ export interface D1Timing {
 export const timingStore = new AsyncLocalStorage<D1Timing>();
 const currentTiming = (): D1Timing | undefined => timingStore.getStore();
 
+// Postgres has no server-side duration in its result, so its queries are
+// timed from the Worker and counted in the same fields.
+export const recordDbQuery = (ms: number, sql: string): void => {
+  const timing = currentTiming();
+  if (!timing) return;
+  timing.queries += 1;
+  timing.d1Ms += ms;
+  timing.statements.push(sql.replace(/\s+/g, " ").slice(0, 40));
+};
+
 // KV and R2 failures arrive as rejected promises, so this fault does too.
 const failingProxy = <T extends object>(target: T, name: string): T =>
   new Proxy(target, {

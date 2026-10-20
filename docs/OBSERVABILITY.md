@@ -15,8 +15,9 @@ How to see what the app is doing: the events it logs, where to read them, and ho
 | `admin.access_denied` | warn | `route` | `/admin` without a valid Access token |
 | `cache.kv_failed` | warn | `op`, `error` | A KV session cache read, write or delete failed; the app carried on from D1 |
 | `error.unhandled` | error | `resource`, `method`, `error` | Anything that became a 500 |
-| `config.invalid` | error | `setting` | A required setting is missing or unsafe. For `BETTER_AUTH_SECRET` the Worker answers 503; for `sign-in method` (password login off and no Google client) the site loads but offers no way to sign in |
+| `config.invalid` | error | `setting` | A required setting is missing or unsafe. For `BETTER_AUTH_SECRET`, `DB_DRIVER` (not `d1` or `pg`) and `HYPERDRIVE` (`pg` without the binding) the Worker answers 503; for `sign-in method` (password login off and no Google client) the site loads but offers no way to sign in |
 | `auth.not_ready` | error | `waitedMs` | Better Auth's setup or schema check did not settle in time; the Worker answers 503 and starts a fresh auth instance on the next request |
+| `db.unavailable` | error | `resource`, `method`, `error` | Postgres only. On the app's own routes (`/api/me`, notes, avatar): the session check or a notes query could not reach the database, or the database cancelled a query at its 3 s statement timeout. On any route: the request passed the 8 s Postgres deadline (`error` is `deadline`). The Worker answers 503. A database error inside `/api/auth/*` before the deadline is answered by Better Auth as a 500 and shows as `auth.request` with that status |
 
 `resource` is which API resource the request was for (`me`, `notes`, `avatar`, or `other`), and `route` on `admin.access_denied` is the route pattern; neither is the full path, so ids in URLs stay out of these events. `error` is a fixed category (`d1` for D1 errors, otherwise the error's class name), never the message, because a message can carry a key: for the KV session cache, the key is a session token.
 
