@@ -2,7 +2,9 @@
 # Checks scripts/tf.sh's Turnstile test-key guard and its file modes without
 # Terraform or a network: tf.sh is copied into a throwaway tree with a fake
 # `terraform` first on PATH. The fake answers `workspace show` and
-# `state list` from environment variables and otherwise prints "ran".
+# `state list` from environment variables, has no state to pull, and
+# otherwise prints "ran". The redaction step after an apply (#11) is
+# checked by scripts/check-redact-logs.sh; here it finds no Worker.
 # usage: scripts/check-tf-guard.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -11,13 +13,14 @@ work=$(mktemp -d)
 # chmod first: a broken run can leave folders unsearchable, which rm cannot enter.
 trap 'chmod -R u+rwx "$work"; rm -rf "$work"' EXIT
 mkdir -p "$work/tree/scripts" "$work/tree/infra/terraform" "$work/tree/dist/client/assets" "$work/bin"
-cp scripts/tf.sh "$work/tree/scripts/tf.sh"
+cp scripts/tf.sh scripts/redact-logs.mjs "$work/tree/scripts/"
 printf 'not-a-real-token' >"$work/token"
 cat >"$work/bin/terraform" <<'EOF'
 #!/usr/bin/env bash
 case "$1 ${2:-}" in
   "workspace show") echo "${FAKE_WS:-default}" ;;
   "state list") [[ "${FAKE_LIST_FAIL:-}" != yes ]] || exit 1; printf '%s\n' ${FAKE_LIST:-} ;;
+  "state pull") ;;
   *) echo ran ;;
 esac
 EOF

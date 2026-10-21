@@ -49,6 +49,8 @@ scripts/tf.sh --token-file <your token file> apply tfplan
 
 `plan-audit.sh` prints counts by action, every destroy, and which attributes each update changes, without printing the Worker's code or any secret. Read it before you apply. State stays in `infra/terraform`, gitignored and mode 600, because it holds the Turnstile widget's secret and, with Postgres, the database password.
 
+After every apply, `tf.sh` also turns on the Worker's `redact_query_string` setting, so its logs keep request URLs without their query strings; the Google callback carries a one-time sign-in code there. The Terraform provider has no field for this setting, so it is set through the API. If that step fails, `tf.sh` exits 1 even though the apply went through. Fix the error it prints, then plan and apply again: the saved plan is spent, and an apply with nothing to change still runs the step. The step also runs after an apply that fails, or that you decline at the prompt, if the Worker is already in state; it only ever turns redaction on.
+
 The first apply puts the Worker on your hostname before the database has tables and before the secrets exist. Until steps 4 and 5 are done, the auth routes answer 500 or 503. That is expected.
 
 ## 4. Migrate the database

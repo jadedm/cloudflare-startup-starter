@@ -67,4 +67,17 @@ terraform "$@" || status=$?
 # folder, and mode 600 on a folder makes everything in it unreachable.
 find . -maxdepth 3 -type f \( -name 'terraform.tfstate*' -o -name 'tfplan*' \) -exec chmod 600 {} + ||
   echo "warning: could not set mode 600 on the state and plan files" >&2
+
+# The provider cannot set observability.redact_query_string (#11), so it is
+# set after every apply, a failed one included: an apply can upload the
+# Worker and then fail on a later resource. Terraform's exit code wins; a
+# failure here turns a successful apply into exit 1.
+if [[ "${1:-}" == "apply" ]]; then
+  redacted=0
+  terraform state pull | node ../../scripts/redact-logs.mjs || redacted=$?
+  if (( redacted != 0 && status == 0 )); then
+    echo "the apply went through, but query strings are not redacted in the Worker's logs; fix the error above and run an apply again" >&2
+    status=1
+  fi
+fi
 exit "$status"
