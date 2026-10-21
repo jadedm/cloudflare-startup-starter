@@ -71,7 +71,7 @@ export CLOUDFLARE_API_TOKEN="$(cat <your token file>)" CLOUDFLARE_ACCOUNT_ID=<ac
 node scripts/smoke.mjs deployed-anon https://<host>
 ```
 
-Covers the cases that need no login: static serving, the callback route, missing and forged Turnstile tokens, unauthenticated requests, CORS, and the Access redirect on `/admin`. With password login off, the default, cases 4 and 5 expect 404 from the password routes instead of the captcha errors; the group reads which it is from `/api/auth-methods`. Real Turnstile and Google sign-in need a browser.
+Covers the cases that need no login: static serving, the callback route, missing and forged Turnstile tokens, unauthenticated requests, CORS, and the Access redirect on `/admin`. With password login off, the default, cases 4 and 5 expect 404 from the password routes instead of the captcha errors; the group reads which it is from `/api/auth-methods`. On a Postgres deploy, set `SMOKE_DB=pg` and the `SMOKE_PG_*` variables so cases 4 and 5 read Postgres (see [DEPLOY.md](DEPLOY.md), "Check it from outside"); `SMOKE_RUN_ID` fixes the run's emails, so a check can seed a row that case 4 must find. Real Turnstile and Google sign-in need a browser.
 
 ## Measuring
 

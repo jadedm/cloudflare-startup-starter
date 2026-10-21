@@ -6,7 +6,9 @@ import { execFileSync, spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import pg from "pg";
 import { Agent, request, setGlobalDispatcher } from "undici";
+import { readSecret, sslFor } from "./pg-connect.mjs";
 
 const [group, base = "https://127.0.0.1:8787"] = process.argv.slice(2);
 if (!group) throw new Error("usage: smoke.mjs <group> [baseUrl]");
@@ -30,7 +32,8 @@ setGlobalDispatcher(
 const PASS_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 const PASSWORD = "correct-horse-battery";
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
-const runId = Date.now().toString(36);
+// SMOKE_RUN_ID fixes the run's emails, so a check can seed a row a case must find.
+const runId = process.env.SMOKE_RUN_ID ?? Date.now().toString(36);
 
 // ok is true, false, or null for a measurement that is recorded but not judged.
 const results = [];
@@ -108,6 +111,72 @@ const count = (table, where, ...args) => {
   const filled = args.reduce((q, a) => q.replace("?", `'${String(a).replaceAll("'", "''")}'`), where);
   return sql(`select count(*) as n from "${table}" where ${filled}`)[0].n;
 };
+
+// A deployed app on Postgres keeps its rows there, and its D1 database is
+// empty (#16). With SMOKE_DB=pg the deployed groups read counts from Postgres
+// as the owner, under the TLS rule scripts/pg-connect.mjs applies.
+const remotePg = (() => {
+  const e = process.env;
+  // Only the deployed groups read a remote database; the local ones keep theirs.
+  if (!group.startsWith("deployed") || !e.SMOKE_DB || e.SMOKE_DB === "d1") return null;
+  const stop = (message) => {
+    console.error(`smoke: ${message}`);
+    process.exit(2);
+  };
+  if (e.SMOKE_DB !== "pg") stop(`SMOKE_DB is ${e.SMOKE_DB}; use d1 or pg`);
+  // No default database: the app's own one is not `postgres` (DEPLOY.md, step 4).
+  const missing = ["SMOKE_PG_HOST", "SMOKE_PG_DATABASE", "SMOKE_PG_OWNER_PASSWORD_FILE"].filter((k) => !e[k]);
+  if (missing.length > 0) stop(`set ${missing.join(" and ")}`);
+  const port = Number(e.SMOKE_PG_PORT ?? 5432);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) stop("bad SMOKE_PG_PORT");
+  const read = (what, f) => {
+    try {
+      return f();
+    } catch (err) {
+      return stop(`cannot read ${what}: ${err.code ?? err.message}`);
+    }
+  };
+  const ssl = read("SMOKE_PG_CA_FILE", () => sslFor({ host: e.SMOKE_PG_HOST, caFile: e.SMOKE_PG_CA_FILE, tls: e.SMOKE_PG_TLS }));
+  if (ssl instanceof Error) stop(`SMOKE_DB=pg: ${ssl.message} (here SMOKE_PG_CA_FILE and SMOKE_PG_TLS)`);
+  const password = read("SMOKE_PG_OWNER_PASSWORD_FILE", () => readSecret(e.SMOKE_PG_OWNER_PASSWORD_FILE));
+  return { host: e.SMOKE_PG_HOST, port, database: e.SMOKE_PG_DATABASE, user: e.SMOKE_PG_OWNER ?? "postgres", password, ssl };
+})();
+
+// Row counts for the deployed groups. A read that fails is returned as an
+// error for the case to record, so one bad read does not stop the group.
+const deployedCount = async (table, where, ...args) => {
+  try {
+    if (!remotePg) return { n: count(table, where, ...args) };
+    const client = new pg.Client({ ...remotePg, connectionTimeoutMillis: 15_000, query_timeout: 15_000 });
+    // A dropped connection then fails the query instead of crashing the run.
+    client.on("error", () => {});
+    await client.connect();
+    try {
+      let i = 0;
+      const r = await client.query(`select count(*)::int as n from "${table}" where ${where.replace(/\?/g, () => `$${++i}`)}`, args);
+      return { n: r.rows[0].n };
+    } finally {
+      await client.end();
+    }
+  } catch (e) {
+    // wrangler reports D1 errors as JSON on stdout; only its notes are kept,
+    // since the top-level text names the account in the API path.
+    const wranglerNotes = (() => {
+      try {
+        return JSON.parse(e?.stdout ?? "").error?.notes?.map((n) => n.text).join("; ");
+      } catch {
+        return undefined;
+      }
+    })();
+    // Other D1 failures print no wrangler output, which can carry the account.
+    const d1Failure = () => `wrangler d1 execute failed (${e?.status !== undefined ? `exit ${e.status}` : (e?.name ?? "error")})`;
+    const text = wranglerNotes || (remotePg ? String(e?.message ?? e) : d1Failure());
+    const noTable = !remotePg && /no such table/.test(text);
+    const hint = noTable ? "; D1 has no tables, so on a Postgres deploy set SMOKE_DB=pg (docs/DEPLOY.md)" : "";
+    return { n: null, error: `row read failed: ${text.slice(0, 160)}${hint}` };
+  }
+};
+const rowsSaid = (c) => (c.n === null ? c.error : `user rows ${c.n}`);
 
 // Better Auth rate-limits auth routes per IP, and its counters live in D1 across
 // groups. A random block per run plus a fresh address per call keeps cases independent.
@@ -357,14 +426,16 @@ const groups = {
     const [noToken, forged] = methods.password ? [400, 403] : [404, 404];
     const e4 = `d4-${runId}@example.test`;
     const up4 = await signUp(e4, null);
-    record("4", up4.status === noToken && count("user", `email = ?`, e4) === 0,
-      `password login ${methods.password ? "on" : "off"}: sign-up ${up4.status}, user rows ${count("user", `email = ?`, e4)}`);
+    const c4 = await deployedCount("user", `email = ?`, e4);
+    record("4", up4.status === noToken && c4.n === 0,
+      `password login ${methods.password ? "on" : "off"}: sign-up ${up4.status}, ${rowsSaid(c4)}`);
 
     const e5 = `d5-${runId}@example.test`;
     const up5 = await signUp(e5, "forged-token");
     const in5 = await signIn(e5, PASSWORD, "forged-token");
-    record("5", up5.status === forged && in5.status === forged && count("user", `email = ?`, e5) === 0,
-      `password login ${methods.password ? "on" : "off"}: sign-up ${up5.status}, sign-in ${in5.status}, user rows ${count("user", `email = ?`, e5)}`);
+    const c5 = await deployedCount("user", `email = ?`, e5);
+    record("5", up5.status === forged && in5.status === forged && c5.n === 0,
+      `password login ${methods.password ? "on" : "off"}: sign-up ${up5.status}, sign-in ${in5.status}, ${rowsSaid(c5)}`);
 
     const noCookie = await req("/api/me");
     const junk = await req("/api/me", { cookie: "__Secure-better-auth.session_token=junk.junk" });

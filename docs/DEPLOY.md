@@ -123,7 +123,16 @@ export CLOUDFLARE_API_TOKEN="$(cat <your token file>)" CLOUDFLARE_ACCOUNT_ID=<ac
 node scripts/smoke.mjs deployed-anon https://<host>
 ```
 
-If you changed `app_name`, add `D1_NAME=<app_name>-db` in front of the `node` command. This check reads user rows from D1, so it works on a D1 deploy only; on Postgres it stops with an error at case 4, where it queries the empty D1 database (#16).
+If you changed `app_name`, add `D1_NAME=<app_name>-db` in front of the `node` command. Cases 4 and 5 check that no user row was created, which on D1 is read with wrangler.
+
+On Postgres, skip the `export` line above: the rows are read from the database instead, as the owner, with the certificate verified as in "Postgres instead of D1". If the project restricts database access by IP, allow your address while it runs.
+
+```
+SMOKE_DB=pg SMOKE_PG_HOST=db.<project ref>.supabase.co SMOKE_PG_DATABASE=<app database> SMOKE_PG_OWNER_PASSWORD_FILE=<owner password file> \
+  SMOKE_PG_CA_FILE=infra/terraform/certs/supabase-ca-2021.crt node scripts/smoke.mjs deployed-anon https://<host>
+```
+
+`SMOKE_PG_DATABASE` is the database `pg-setup.sh` created and has no default. `SMOKE_PG_PORT` and `SMOKE_PG_OWNER` default to 5432 and `postgres`. Without `SMOKE_DB=pg`, a Postgres deploy fails cases 4 and 5 with a note that D1 has no tables. A row read that fails marks only its case as failed; the rest of the group still runs.
 
 ## Tear it down
 
