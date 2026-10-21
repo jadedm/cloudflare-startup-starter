@@ -104,6 +104,12 @@ variable "workers_dev_enabled" {
   default     = false
 }
 
+variable "invocation_logs" {
+  description = "Store Cloudflare's per-request log line (URL, status, client location) in Workers Logs. During each Worker upload, URLs are stored with their query strings for a few seconds, and longer if the redaction step fails (docs/OBSERVABILITY.md). The app's own events are stored either way."
+  type        = bool
+  default     = false
+}
+
 variable "create_rate_limit" {
   description = "Create the sign-in rate limit rule. The Free plan allows one rule per zone; set false if the zone already uses it."
   type        = bool

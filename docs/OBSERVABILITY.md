@@ -25,7 +25,7 @@ Every event carries `requestId`, which is Cloudflare's ray id. The same value is
 
 These events never carry an email, password, cookie, token or secret. The local test suite checks this on every run, including the actual session token values it created (cases S6 and S7 in [TESTING.md](TESTING.md)).
 
-That covers the app's own events. Workers Logs also stores one invocation log per request, written by Cloudflare, with request details such as the URL and the client's network and location. The URL is stored without its query string once `scripts/tf.sh` has turned on `redact_query_string`, which it does after every apply because the provider cannot set it (see [DEPLOY.md](DEPLOY.md), step 3). Until that step has succeeded, URLs are stored whole, query string included. If you do not want those logs stored at all, set `invocation_logs = false` in `infra/terraform/worker.tf`; the app's events still arrive.
+By default Workers Logs stores only what the Worker writes with `console.*`: these events, plus anything a library logs. Cloudflare can also store one invocation log per request, with the URL, the status and the client's network and location; set `invocation_logs = true` in `terraform.tfvars` to turn that on. It is off because of the URL. Query strings carry one-time values, such as the code on the Google sign-in callback, and the setting that keeps them out of the logs, `redact_query_string`, cannot be set through Terraform. `scripts/tf.sh` turns it on after every apply (see [DEPLOY.md](DEPLOY.md), step 3), but each apply that uploads the Worker resets it first: in two measured deploys on 21 Oct 2026, URLs were stored whole for under 6 seconds, and for longer if the step fails. With invocation logs on, that happens on every deploy that changes the Worker. A deploy made before this default (#19) had them on; its next apply turns them off. The `wrangler*.jsonc` files set them off too, so a direct `wrangler deploy` does not turn them back on.
 
 Rate limit blocks at the edge happen before the Worker runs, so they do not appear here. Find them in the dashboard under your zone's Security events.
 
@@ -60,7 +60,7 @@ The first call opens a browser to sign in to Cloudflare and choose an account. T
 - "Count auth.request events grouped by code for the last hour."
 - "How many error.unhandled events since yesterday, grouped by resource?"
 
-Tested on 19 Oct 2026: listing Workers and counting or grouping the app's events worked. Asking the observability server to list the app's raw events failed with a parse error, because it expects invocation fields such as `outcome` on every event and the app's log lines do not have them. For a single log line, for example the one matching a user's ray id, use the dashboard's query builder or the Workers Observability query API instead.
+Tested on 19 Oct 2026 with invocation logs on, and on 21 Oct 2026 with them off: listing Workers and counting or grouping the app's events worked. Asking the observability server to list the app's raw events failed with a parse error, because it expects invocation fields such as `outcome` or `requestId` on every event and the app's log lines do not have them. For a single log line, for example the one matching a user's ray id, use the dashboard's query builder or the Workers Observability query API instead.
 
 The assistant reads through the same query API as the dashboard and sees only what your Cloudflare login can see.
 
