@@ -19,6 +19,8 @@ node scripts/check-sql.mjs   # the query template numbers values per driver and 
 
 `scripts/check-tf-guard.sh` needs neither Docker nor Terraform: it runs `scripts/tf.sh` against a fake `terraform` and checks that a build carrying Turnstile's test site key is refused except with `--first-deploy` on a workspace with no widget, that destroys and saved plans pass, and that state files end up mode 600 without making the workspace folder unreadable.
 
+`scripts/check-empty-avatars.sh` needs neither a Cloudflare account nor Terraform: it runs `scripts/empty-avatars.mjs` against a local fake of the R2 list and delete API (`scripts/fake-r2-api.mjs`), and `teardown-prepare.sh` in a throwaway tree with a fake `terraform`. It checks that every page of avatars is listed before the first delete, that refused, malformed and looping list answers stop the run with nothing deleted, that objects outside `avatars/` are left and reported, that a failed delete leaves no destroy plan (an earlier one is removed), and that the token is never printed.
+
 ## Cases
 
 | Case | Group | What it proves |
