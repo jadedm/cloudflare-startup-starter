@@ -60,7 +60,7 @@ The first call opens a browser to sign in to Cloudflare and choose an account. T
 - "Count auth.request events grouped by code for the last hour."
 - "How many error.unhandled events since yesterday, grouped by resource?"
 
-Tested on 19 Oct 2026, with invocation logs on: listing Workers and counting or grouping the app's events worked. Asking the observability server to list the app's raw events failed with a parse error, because it expects invocation fields such as `outcome` on every event and the app's log lines do not have them. For a single log line, for example the one matching a user's ray id, use the dashboard's query builder or the Workers Observability query API instead.
+Tested on 19 Oct 2026 with invocation logs on, and on 21 Oct 2026 with them off: listing Workers and counting or grouping the app's events worked. Asking the observability server to list the app's raw events failed with a parse error, because it expects invocation fields such as `outcome` or `requestId` on every event and the app's log lines do not have them. For a single log line, for example the one matching a user's ray id, use the dashboard's query builder or the Workers Observability query API instead.
 
 The assistant reads through the same query API as the dashboard and sees only what your Cloudflare login can see.
 
