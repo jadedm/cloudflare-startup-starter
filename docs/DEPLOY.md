@@ -1,12 +1,12 @@
 # Deploy
 
-From a Cloudflare account with a domain to the first sign-in. Every app resource is created by Terraform; the Worker's secrets are set with wrangler so their values stay out of Terraform state.
+From a Cloudflare account with a domain to the first sign-in. Every app resource is created by Terraform; the Worker's secrets are set with wrangler so their values stay out of Terraform state. State does hold two secrets: the Turnstile widget's secret, which Terraform creates, and with the Postgres option the database password, which Hyperdrive's configuration needs.
 
 ## What you need
 
 - A Cloudflare account with a domain (zone) on it.
 - Terraform 1.15 or later, Node 22, pnpm.
-- A Cloudflare API token, saved to a file only you can read (for example with `chmod 600`). Give it these permissions on your account: Workers Scripts Edit, Workers KV Storage Edit, Workers R2 Storage Edit, D1 Edit, Turnstile Sites Edit, Access: Apps and Policies Edit, Access: Organizations, Identity Providers, and Groups Read, and Account Analytics Read (for `scripts/cpu-report.sh`); and on your zone: Zone Read, Workers Routes Edit, Zone WAF Edit, DNS Edit.
+- A Cloudflare API token, saved to a file only you can read (for example with `chmod 600`). Give it these permissions on your account: Workers Scripts Edit, Workers KV Storage Edit, Workers R2 Storage Edit, D1 Edit, Turnstile Sites Edit, Access: Apps and Policies Edit, Access: Organizations, Identity Providers, and Groups Read, and Account Analytics Read (for `scripts/cpu-report.sh`); and on your zone: Zone Read, Workers Routes Edit, Zone WAF Edit, DNS Edit. For the Postgres option, add Hyperdrive Edit and Account: SSL and Certificates Edit on the account (the second uploads Supabase's CA certificate).
 - Cloudflare Zero Trust set up on the account, with a team domain and the One-time PIN login method turned on. The Zero Trust Free plan can still ask for a payment method when you set it up. Find the One-time PIN method's id with:
 
   ```
@@ -47,7 +47,7 @@ scripts/tf.sh --token-file <your token file> apply tfplan
 
 `--first-deploy` lets this one plan carry the test site key. `tf.sh` refuses a build with a test key otherwise, and refuses it even with the flag once the Turnstile widget is in state, so a test build cannot reach a live site by accident.
 
-`plan-audit.sh` prints counts by action, every destroy, and which attributes each update changes, without printing the Worker's code or any secret. Read it before you apply. State stays in `infra/terraform`, gitignored and mode 600, because it holds the Turnstile widget's secret.
+`plan-audit.sh` prints counts by action, every destroy, and which attributes each update changes, without printing the Worker's code or any secret. Read it before you apply. State stays in `infra/terraform`, gitignored and mode 600, because it holds the Turnstile widget's secret and, with Postgres, the database password.
 
 The first apply puts the Worker on your hostname before the database has tables and before the secrets exist. Until steps 4 and 5 are done, the auth routes answer 500 or 503. That is expected.
 
@@ -69,7 +69,9 @@ The Worker refuses to serve (503, and a `config.invalid` log event) until `BETTE
 
 With the default `password_login = "off"`, Google is the only sign-in method, so set it up here or the site offers no way to sign in (the Worker logs `config.invalid`). Password login needs Workers Paid: on Free, password hashing is cut off by the 10 ms CPU limit after a short burst.
 
-For Google login, create an OAuth web client in Google Cloud with the redirect URI `https://<host>/api/auth/callback/google`, save the client id and secret to two files, and add `--google-id-file <file> --google-secret-file <file>`. Leave out `--rotate-auth-secret` on later runs; rotating it signs everyone out.
+For Google login, create an OAuth web client in Google Cloud with the redirect URI `https://<host>/api/auth/callback/google`, save the client id and secret to two files, and add `--google-id-file <file> --google-secret-file <file>`. Leave out `--rotate-auth-secret` on later runs; rotating it signs everyone out. The redirect URI goes under "Authorised redirect URIs"; "Authorised JavaScript origins" is not needed, and Google can take a few minutes to apply the change.
+
+A new Google OAuth app starts in testing, where only the test users you list (up to 100) can sign in. The starter asks Google only for `openid`, `email` and `profile`, so you can publish the app (Google Auth Platform, Audience, Publish app) without Google's verification review, and then any Google account can sign in. Showing your app's name or logo on Google's consent screen does need brand verification. These rules come from Google's help pages ([Manage App Audience](https://support.google.com/cloud/answer/15549945), [brand verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/brand-verification)), checked on 21 October 2026; check them again before you publish.
 
 ## 6. Rebuild with your site key and apply again
 
@@ -80,7 +82,37 @@ scripts/plan-audit.sh --token-file <your token file>
 scripts/tf.sh --token-file <your token file> apply tfplan
 ```
 
-Open `https://<host>`, sign up, and check the logs as described in [OBSERVABILITY.md](OBSERVABILITY.md).
+Open `https://<host>`, sign in with Google (or sign up with a password, if you turned password login on), and check the logs as described in [OBSERVABILITY.md](OBSERVABILITY.md).
+
+## Postgres instead of D1
+
+The same app with its tables in a Supabase Postgres database, reached through Hyperdrive. Terraform still creates the D1 database; it stays empty. Before step 2, run `pnpm install` (the setup script needs the `pg` package), then:
+
+1. **Create a Supabase project**, and save its owner password (the `postgres` user's) to a file only you can read. You need the direct connection host, `db.<project ref>.supabase.co`, port 5432. Without Supabase's IPv4 add-on that host had only an IPv6 address when this was written (October 2026), so the machine that runs the setup needs IPv6.
+2. **Check the CA certificate.** Hyperdrive verifies the database's certificate, hostname included, against `infra/terraform/certs/supabase-ca-2021.crt`. Compare it with the one in the Supabase dashboard (Database Settings, SSL Configuration). If yours differs, use it in both places: `--ca-file` below (a path from where you run the command) and `supabase_ca_file` in `terraform.tfvars` (a path from `infra/terraform`).
+3. **Network restrictions.** If the project restricts database access by IP, Hyperdrive connects from Cloudflare's ranges ([cloudflare.com/ips](https://www.cloudflare.com/ips/)), so allow those, and allow your own address while the next step runs.
+4. **Set up the database**, as the owner:
+
+   ```
+   scripts/pg-setup.sh --host db.<project ref>.supabase.co --database <app database> \
+     --owner-password-file <owner password file> \
+     --ca-file infra/terraform/certs/supabase-ca-2021.crt --out <new worker password file>
+   ```
+
+   It creates the app's database if it is missing, applies `migrations-pg/`, and gives the Worker's role, `app_worker`, a new random password in the `--out` file (mode 600). Use a database of the app's own, not the project's `postgres` database: the migrations take PUBLIC's execute right away from every function in its `public` schema. A second run applies only new migrations, then stops at the password step because the `--out` file exists; use `scripts/migrate-pg.mjs` for later migrations.
+5. **Add to `terraform.tfvars`:** `db_driver = "pg"`, `supabase_host` and `supabase_database` (the commented block in `terraform.tfvars.example` lists them). Pass the password through the environment, never on a command line:
+
+   ```
+   export TF_VAR_supabase_password="$(cat <new worker password file>)"
+   ```
+
+   Every plan needs it, so export it again in any new shell before a plan, including the teardown. Without it the plan stops with `db_driver = "pg" needs supabase_password`.
+
+Then follow steps 2 to 6 and skip step 4, which migrates D1.
+
+If the account already holds Supabase's CA certificate, for example from a second app on the same account, Cloudflare refuses another copy (seen on 20 October 2026). Set `supabase_ca_certificate_id` to the existing certificate's id (`GET /accounts/<account id>/mtls_certificates`) and nothing is uploaded. That certificate then belongs to the other app, and destroying it there breaks this one.
+
+The destroy below removes the Hyperdrive configuration and the certificate this app uploaded. The Supabase database, its tables and the `app_worker` role stay; drop them in Supabase.
 
 ## Check it from outside
 
@@ -89,16 +121,18 @@ export CLOUDFLARE_API_TOKEN="$(cat <your token file>)" CLOUDFLARE_ACCOUNT_ID=<ac
 node scripts/smoke.mjs deployed-anon https://<host>
 ```
 
-If you changed `app_name`, add `D1_NAME=<app_name>-db` in front of the `node` command.
+If you changed `app_name`, add `D1_NAME=<app_name>-db` in front of the `node` command. This check reads user rows from D1, so it works on a D1 deploy only; on Postgres it stops with an error at case 4, where it queries the empty D1 database (#16).
 
 ## Tear it down
+
+On Postgres, export `TF_VAR_supabase_password` first, as in "Postgres instead of D1": the destroy plan needs it.
 
 ```
 scripts/teardown-prepare.sh --token-file <your token file> --account <account id>
 scripts/tf.sh --token-file <your token file> apply tfplan-destroy
 ```
 
-The first command deletes every avatar from the R2 bucket, found by listing the bucket, and writes a destroy plan for you to read. It stops without a plan if anything is left in the bucket: an object outside `avatars/`, which the app never writes and the script does not delete, or an avatar uploaded while it ran. Cloudflare's API allows 1,200 R2 calls per five minutes, so with more avatars than that the script pauses when it is rate limited and carries on. The site stays up until the destroy, so an upload after the script finishes also makes the destroy fail on the bucket; run the first command again. The second deletes everything, including the database. Afterwards delete `infra/terraform/terraform.tfstate*` and every `infra/terraform/tfplan*` file: state and saved plans both hold the Turnstile secret.
+The first command deletes every avatar from the R2 bucket, found by listing the bucket, and writes a destroy plan for you to read. It stops without a plan if anything is left in the bucket: an object outside `avatars/`, which the app never writes and the script does not delete, or an avatar uploaded while it ran. Cloudflare's API allows 1,200 R2 calls per five minutes, so with more avatars than that the script pauses when it is rate limited and carries on. The site stays up until the destroy, so an upload after the script finishes also makes the destroy fail on the bucket; run the first command again. The second deletes everything, including the database. Afterwards delete `infra/terraform/terraform.tfstate*` and every `infra/terraform/tfplan*` file: state and saved plans both hold the Turnstile secret and, on Postgres, the database password.
 
 ## Troubleshooting
 

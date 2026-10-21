@@ -11,3 +11,12 @@ access_otp_idp_id  = "your-one-time-pin-identity-provider-id"
 # session_cache       = "kv"
 # password_login      = "off"   # "on" needs Workers Paid; off means Google sign-in only
 # workers_dev_enabled = false
+
+# Postgres instead of D1 (docs/DEPLOY.md, "Postgres instead of D1"). The
+# password is not set here: export TF_VAR_supabase_password from the file
+# scripts/pg-setup.sh wrote.
+# db_driver                  = "pg"
+# supabase_host              = "db.your-project-ref.supabase.co"
+# supabase_database          = "your_app_database"
+# supabase_ca_file           = "certs/supabase-ca-2021.crt"
+# supabase_ca_certificate_id = ""   # an existing account certificate's id, to reuse it
