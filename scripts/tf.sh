@@ -76,7 +76,7 @@ if [[ "${1:-}" == "apply" ]]; then
   redacted=0
   terraform state pull | node ../../scripts/redact-logs.mjs || redacted=$?
   if (( redacted != 0 && status == 0 )); then
-    echo "the apply went through, but query strings are not redacted in the Worker's logs; fix the error above and run an apply again" >&2
+    echo "the apply went through, but query strings are not redacted in the Worker's logs (this exposes them only with invocation_logs = true); fix the error above and run an apply again" >&2
     status=1
   fi
 fi

@@ -2,11 +2,13 @@ locals {
   # Spelled out in full: with only enabled = true, Cloudflare fills in these
   # defaults and every plan shows the Worker changing.
   # redact_query_string is missing because the provider has no field for it;
-  # scripts/tf.sh sets it through the API after every apply (#11).
+  # scripts/tf.sh sets it through the API after every apply (#11). Each Worker
+  # upload resets it until then, so invocation logs, which store request URLs,
+  # are off unless asked for (#19).
   observability = {
     enabled            = true
     head_sampling_rate = 1
-    logs               = { enabled = true, head_sampling_rate = 1, invocation_logs = true, persist = true }
+    logs               = { enabled = true, head_sampling_rate = 1, invocation_logs = var.invocation_logs, persist = true }
     traces             = { enabled = false, head_sampling_rate = 1, persist = true }
   }
 }

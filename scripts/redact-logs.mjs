@@ -2,7 +2,9 @@
 // Turns on observability.redact_query_string for the app's Worker, so Workers
 // Logs keeps request URLs without their query strings. The Google callback
 // carries the one-time OAuth code there (#11). The Terraform provider (5.28.x)
-// has no field for it, so scripts/tf.sh runs this after every apply.
+// has no field for it, so scripts/tf.sh runs this after every apply. With
+// invocation logs off (the default since #19) Workers Logs stores no URLs, and
+// this keeps the flag right for anyone who turns them on.
 // Reads Terraform state on stdin (`terraform state pull`) to find the Worker's
 // account and name; with no Worker in state (a destroy, or a first apply that
 // stopped early) it does nothing. Otherwise it reads the script settings,
