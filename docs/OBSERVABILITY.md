@@ -13,7 +13,7 @@ How to see what the app is doing: the events it logs, where to read them, and ho
 | `request.origin_rejected` | warn | `resource`, `method` | A cookie-bearing write without this app's Origin or Referer (403) |
 | `upload.rejected` | warn | `reason` (`no_length`, `too_large`, `not_an_image`) | An avatar upload refused |
 | `admin.access_denied` | warn | `route` | `/admin` without a valid Access token |
-| `cache.kv_failed` | warn | `op`, `error` | A KV session cache read, write or delete failed; the app carried on from D1 |
+| `cache.kv_failed` | warn | `op`, `error` | A KV session cache read, write or delete failed; the app carried on from the database |
 | `error.unhandled` | error | `resource`, `method`, `error` | Anything that became a 500 |
 | `config.invalid` | error | `setting` | A required setting is missing or unsafe. For `BETTER_AUTH_SECRET`, `DB_DRIVER` (not `d1` or `pg`) and `HYPERDRIVE` (`pg` without the binding) the Worker answers 503; for `sign-in method` (password login off and no Google client) the site loads but offers no way to sign in |
 | `auth.not_ready` | error | `waitedMs` | Better Auth's setup or schema check did not settle in time; the Worker answers 503 and starts a fresh auth instance on the next request |
