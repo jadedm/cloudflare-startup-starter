@@ -98,7 +98,7 @@ scripts/teardown-prepare.sh --token-file <your token file> --account <account id
 scripts/tf.sh --token-file <your token file> apply tfplan-destroy
 ```
 
-The first command empties the R2 bucket and writes a destroy plan for you to read. The second deletes everything, including the database. Afterwards delete `infra/terraform/terraform.tfstate*` and every `infra/terraform/tfplan*` file: state and saved plans both hold the Turnstile secret.
+The first command deletes every avatar from the R2 bucket, found by listing the bucket, and writes a destroy plan for you to read. It stops without a plan if anything is left in the bucket: an object outside `avatars/`, which the app never writes and the script does not delete, or an avatar uploaded while it ran. Cloudflare's API allows 1,200 R2 calls per five minutes, so with more avatars than that the script pauses when it is rate limited and carries on. The site stays up until the destroy, so an upload after the script finishes also makes the destroy fail on the bucket; run the first command again. The second deletes everything, including the database. Afterwards delete `infra/terraform/terraform.tfstate*` and every `infra/terraform/tfplan*` file: state and saved plans both hold the Turnstile secret.
 
 ## Troubleshooting
 

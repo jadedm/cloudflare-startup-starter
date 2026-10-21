@@ -3,6 +3,8 @@
 # empty before it can be deleted), then writes a saved destroy plan to
 # infra/terraform/tfplan-destroy and prints its audit. Deletes nothing else;
 # the destroy is `scripts/tf.sh --token-file <file> apply tfplan-destroy`.
+# Any earlier tfplan-destroy is removed first, so a run that stops partway
+# never leaves an old plan behind to apply.
 # usage: scripts/teardown-prepare.sh --token-file <file> --account <id>
 set -euo pipefail
 CALLER_DIR="$PWD"
@@ -17,32 +19,18 @@ while (( $# > 0 )); do
     *) echo "unknown flag $1" >&2; exit 1 ;;
   esac
 done
-[[ -n "$TOKEN_FILE" && -n "$ACCOUNT" ]] || { sed -n 6p "$0" >&2; exit 1; }
+[[ -n "$TOKEN_FILE" && -n "$ACCOUNT" ]] || { sed -n 8p "$0" >&2; exit 1; }
 # Resolve a relative token path against where the script was run from.
 [[ "$TOKEN_FILE" == /* ]] || TOKEN_FILE="$CALLER_DIR/$TOKEN_FILE"
 
 export CLOUDFLARE_API_TOKEN="$(cat "$TOKEN_FILE")"
 export CLOUDFLARE_ACCOUNT_ID="$ACCOUNT"
-WRANGLER="$PWD/node_modules/.bin/wrangler"
-DB=$(scripts/tf.sh --token-file "$TOKEN_FILE" output -raw d1_database_name)
+rm -f infra/terraform/tfplan-destroy
 BUCKET=$(scripts/tf.sh --token-file "$TOKEN_FILE" output -raw r2_bucket_name)
-WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
 
-# Run wrangler from an empty folder so it finds the database by name rather
-# than the local placeholder id in wrangler.jsonc.
-ids=$(cd "$WORK" && "$WRANGLER" d1 execute "$DB" --remote --json --command 'select id from "user"' | jq -r '.[0].results[].id')
-echo "users in $DB: $(printf '%s\n' "$ids" | grep -c . || true)"
-
-deleted=0 failed=0
-for id in $ids; do
-  if (cd "$WORK" && "$WRANGLER" r2 object delete "$BUCKET/avatars/$id" --remote >/dev/null 2>&1); then
-    deleted=$((deleted + 1))
-  else
-    failed=$((failed + 1))
-  fi
-done
-echo "avatar deletes in $BUCKET: $deleted succeeded, $failed failed or absent"
+# The keys come from listing the bucket, so this works for D1 and Postgres
+# alike (#13). It exits non-zero, and no plan is written, if anything is left.
+node scripts/empty-avatars.mjs --bucket "$BUCKET"
 
 scripts/tf.sh --token-file "$TOKEN_FILE" plan -destroy -input=false -no-color -out=tfplan-destroy >/dev/null
 echo "destroy plan written to infra/terraform/tfplan-destroy"
