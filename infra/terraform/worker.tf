@@ -1,6 +1,8 @@
 locals {
   # Spelled out in full: with only enabled = true, Cloudflare fills in these
   # defaults and every plan shows the Worker changing.
+  # redact_query_string is missing because the provider has no field for it;
+  # scripts/tf.sh sets it through the API after every apply (#11).
   observability = {
     enabled            = true
     head_sampling_rate = 1

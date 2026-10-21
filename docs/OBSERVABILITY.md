@@ -25,7 +25,7 @@ Every event carries `requestId`, which is Cloudflare's ray id. The same value is
 
 These events never carry an email, password, cookie, token or secret. The local test suite checks this on every run, including the actual session token values it created (cases S6 and S7 in [TESTING.md](TESTING.md)).
 
-That covers the app's own events. Workers Logs also stores one invocation log per request, written by Cloudflare, with request details such as the URL and the client's network and location. If you do not want those stored, set `invocation_logs = false` in `infra/terraform/worker.tf`; the app's events still arrive.
+That covers the app's own events. Workers Logs also stores one invocation log per request, written by Cloudflare, with request details such as the URL and the client's network and location. The URL is stored without its query string once `scripts/tf.sh` has turned on `redact_query_string`, which it does after every apply because the provider cannot set it (see [DEPLOY.md](DEPLOY.md), step 3). Until that step has succeeded, URLs are stored whole, query string included. If you do not want those logs stored at all, set `invocation_logs = false` in `infra/terraform/worker.tf`; the app's events still arrive.
 
 Rate limit blocks at the edge happen before the Worker runs, so they do not appear here. Find them in the dashboard under your zone's Security events.
 
