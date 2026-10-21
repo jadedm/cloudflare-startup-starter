@@ -92,7 +92,7 @@ failed=()
 for g in "${GROUPS_TO_RUN[@]}"; do
   flags=$(extra_for "$g") || { echo "unknown group $g" >&2; exit 1; }
   log="$LOG_DIR/$g.log"
-  unset SMOKE_PG_CONTAINER SMOKE_PG_DB CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE
+  unset SMOKE_PG_CONTAINER SMOKE_PG_DB CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE SMOKE_RUN_ID
   if [[ "$g" == pg-* ]]; then
     pg_reset
     export SMOKE_PG_CONTAINER="$PG_CONTAINER" SMOKE_PG_DB="$PG_DB"

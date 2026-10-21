@@ -30,16 +30,23 @@ const fail = (usage, message) => {
   process.exit(2);
 };
 
-const tlsFor = (v, usage) => {
-  const loopback = ["127.0.0.1", "::1", "localhost"].includes(v.host);
-  if (v.tls === "off" && loopback) return false;
-  if (v.tls === "off") return fail(usage, "--tls off is only for a loopback host");
-  if (v["ca-file"]) return { ca: readFileSync(v["ca-file"], "utf8"), servername: v.host, rejectUnauthorized: true };
-  if (v.tls === "insecure") {
+// The pg `ssl` option for a host, or an Error saying why none is allowed.
+// Shared with scripts/smoke.mjs (#16), so the rule lives in one place.
+export const sslFor = ({ host, caFile, tls }) => {
+  const loopback = ["127.0.0.1", "::1", "localhost"].includes(host);
+  if (tls === "off" && loopback) return false;
+  if (tls === "off") return new Error("--tls off is only for a loopback host");
+  if (caFile) return { ca: readFileSync(caFile, "utf8"), servername: host, rejectUnauthorized: true };
+  if (tls === "insecure") {
     console.error("warning: --tls insecure, so the database certificate is not verified");
     return { rejectUnauthorized: false };
   }
-  return fail(usage, "give --ca-file <Supabase CA pem>, or --tls insecure to connect without verifying the certificate");
+  return new Error("give --ca-file <Supabase CA pem>, or --tls insecure to connect without verifying the certificate");
+};
+
+const tlsFor = (v, usage) => {
+  const ssl = sslFor({ host: v.host, caFile: v["ca-file"], tls: v.tls });
+  return ssl instanceof Error ? fail(usage, ssl.message) : ssl;
 };
 
 // Returns the script's own options and a pg client config for the owner.
